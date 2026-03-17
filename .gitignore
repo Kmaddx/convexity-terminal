@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+env/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Sensitive / local state
+.env
+*.env
+
+# Score history - regenerates automatically, can get large
+score_history.json
+
+# Old/legacy files
+tickers.json
+
+# Temp files
+*.tmp
+*.log
+
+# CSV exports (generated on demand)
+portfolio_tech_*.csv
+
+# Images (can be regenerated)
+portfolio_chart.png

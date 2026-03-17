@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "portfolio-app",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["/tmp/run_portfolio_app.py"],
+      "port": 8501
+    }
+  ]
+}

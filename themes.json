@@ -1,0 +1,26 @@
+{
+  "themes": {
+    "Space & Satellite": {"etfs": ["UFO", "ARKX"], "tickers": ["RKLB", "ASTS"]},
+    "Uranium / Nuclear": {"etfs": ["URA"], "tickers": ["ASPI"]},
+    "AI Semis": {"etfs": ["SMH", "SOXX"], "tickers": []},
+    "Crypto / Digital Assets": {"etfs": ["BITQ", "BITO"], "tickers": ["BITF", "BMNR", "MSTR"]},
+    "Biotech": {"etfs": ["XBI"], "tickers": ["IBRX"]},
+    "Critical Materials": {"etfs": ["REMX"], "tickers": ["UAMY", "AREC"]},
+    "Defense & Drones": {"etfs": ["ITA"], "tickers": ["ONDS"]},
+    "Renewables / Grid": {"etfs": ["QCLN"], "tickers": []},
+    "Non-Profitable Tech": {"etfs": ["ARKK"], "tickers": []},
+    "Quantum Computing": {"etfs": ["QTUM"], "tickers": []},
+    "Copper & Metals": {"etfs": ["COPX", "XME"], "tickers": []},
+    "Robotics / Broad AI": {"etfs": ["BOTZ", "ROBO"], "tickers": []},
+    "Fintech": {"etfs": ["FINX"], "tickers": ["HOOD", "CRCL"]},
+    "EV & Autonomy": {"etfs": ["DRIV"], "tickers": ["TSLA"]},
+    "Infrastructure": {"etfs": ["PAVE"], "tickers": []},
+    "Mag 7": {"etfs": ["MAGS"], "tickers": []},
+    "Cybersecurity": {"etfs": ["HACK"], "tickers": []},
+    "Edge AI": {"etfs": ["BOTZ"], "tickers": ["LTRX", "OSS"]},
+    "AI & Data": {"etfs": ["AIQ"], "tickers": ["PLTR"]},
+    "AI Software": {"etfs": ["IGV"], "tickers": []},
+    "Clean Energy": {"etfs": ["ICLN", "TAN"], "tickers": []},
+    "AI/HPC": {"etfs": ["SMH"], "tickers": ["CIFR", "BITF", "NBIS", "IREN"]}
+  }
+}

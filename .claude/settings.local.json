@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip install:*)",
+      "Bash(python3 -m pip install yfinance --quiet)",
+      "Bash(python3 portfolio_tech.py)",
+      "Bash(python3 -c \"import matplotlib\")",
+      "Bash(python3 portfolio_chart.py)",
+      "Skill(keybindings-help)",
+      "Skill(keybindings-help:*)",
+      "Bash(python3 -m pip install streamlit plotly --quiet)",
+      "mcp__Claude_Preview__preview_start",
+      "Bash(chmod +x \"/Users/kieran/Documents/Kieran/Claude Projects/Investment/run_app.sh\")"
+    ]
+  }
+}
