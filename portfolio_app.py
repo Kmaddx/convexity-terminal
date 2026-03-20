@@ -1798,6 +1798,20 @@ def calc_four_pillars(row, themes, spy_ret=None, etf_data=None, st_data=None):
     else:
         fund += 3  # no data, neutral
 
+    # Insider ownership: up to 10 pts — skin in the game, founder alignment
+    # High insider ownership = management incentives aligned with shareholders
+    insider_pct = _safe(row.get("InsiderPct"), 0)
+    if insider_pct >= 15:
+        fund += 10  # founder-level ownership
+    elif insider_pct >= 8:
+        fund += 8   # strong insider alignment
+    elif insider_pct >= 3:
+        fund += 5   # moderate
+    elif insider_pct > 0:
+        fund += 2   # minimal
+    else:
+        fund += 1   # no data
+
     # ── Thematic (0-100) ──
     thematic = 0.0
     ticker = row.get("Ticker", "")
@@ -1863,23 +1877,14 @@ def calc_four_pillars(row, themes, spy_ret=None, etf_data=None, st_data=None):
     else:
         narr += 7  # no data = neutral, not penalized
 
-    # Insider buying: 12 pts — strongest conviction signal
+    # Insider buying: 15 pts — strongest conviction signal (recent purchases)
+    # Note: insider OWNERSHIP is scored in Fundamental pillar
     insider_sig = str(row.get("InsiderSignal", "")).lower()
     insider_net = _safe(row.get("InsiderNet"), 0)
     if insider_sig == "buying" or insider_net > 0:
-        narr += 12
+        narr += 15
     else:
-        narr += 3  # absence of insider buying isn't bearish — most stocks don't have it
-
-    # Insider ownership: up to 10 pts — skin in the game
-    # Most small-caps have some insider ownership, scale generously
-    insider_pct = _safe(row.get("InsiderPct"), 0)
-    if insider_pct > 10:
-        narr += 10
-    elif insider_pct > 0:
-        narr += max(3, min(insider_pct / 10 * 8, 10))
-    else:
-        narr += 2
+        narr += 5  # absence of insider buying isn't bearish — most stocks don't have it
 
     # Earnings beat track record: up to 10 pts
     beats = row.get("EarningsBeats")
@@ -2672,6 +2677,16 @@ with tab_dash:
     if insider_buyers:
         alert_card(f"<strong>Insider Buying</strong> (last 90 days): {', '.join(insider_buyers)}", "green")
         _has_alerts = True
+    # Founder-level insider ownership
+    high_insider = df_all[df_all["InsiderPct"].notna() & (df_all["InsiderPct"] >= 10)][["Ticker", "InsiderPct"]].to_dict("records")
+    if high_insider:
+        hi_str = ", ".join([f"{r['Ticker']} ({r['InsiderPct']:.0f}%)" for r in high_insider])
+        alert_card(f"<strong>High Insider Ownership</strong> (&ge;10%): {hi_str} &mdash; founder alignment", "green")
+        _has_alerts = True
+    low_insider = df_all[df_all["InsiderPct"].notna() & (df_all["InsiderPct"] < 1) & (df_all["InsiderPct"] > 0)]["Ticker"].tolist()
+    if low_insider:
+        alert_card(f"<strong>Low Insider Ownership</strong> (&lt;1%): {', '.join(low_insider)} &mdash; limited skin in game", "amber")
+        _has_alerts = True
     rs_leaders = df_all[df_all["RS_Label"] == "Leader"]["Ticker"].tolist() if "RS_Label" in df_all.columns else []
     early_bots = df_all[df_all["EarlyBottom"] == True]["Ticker"].tolist() if "EarlyBottom" in df_all.columns else []
     if rs_leaders:
@@ -2742,7 +2757,7 @@ with tab_dash:
 
     overview_cols = ["Ticker", "Price", "PostMktChg", "Spark30", "SetupStage", "RS_Label",
                      "PillarAligned", "ConvexityScore", "MomentumScore", "RSI", "Pos52",
-                     "ST_BullPct", "AnalystUpside", "RevGrowthPct", "PS_Current", "ShortPct", "Theme"]
+                     "ST_BullPct", "AnalystUpside", "RevGrowthPct", "InsiderPct", "PS_Current", "ShortPct", "Theme"]
     # Ensure required columns exist
     for _oc in ["RS_Label", "Spark30", "PostMktChg", "ST_BullPct"]:
         if _oc not in overview_df.columns:
@@ -2754,7 +2769,7 @@ with tab_dash:
         "PillarAligned": "Aligned", "ConvexityScore": "Convexity", "MomentumScore": "Momentum",
         "Pos52": "52wk Pos", "ST_BullPct": "Sentiment",
         "AnalystUpside": "Upside %",
-        "RevGrowthPct": "Rev Growth %", "PS_Current": "P/S", "ShortPct": "Short %",
+        "RevGrowthPct": "Rev Growth %", "InsiderPct": "Insider %", "PS_Current": "P/S", "ShortPct": "Short %",
     })
     overview_disp = overview_disp.sort_values("Convexity", ascending=False).reset_index(drop=True)
 
