@@ -24,14 +24,20 @@ st.markdown("""
     div[data-testid="stVerticalBlock"] > div { gap: 0.4rem; }
     .main .block-container { font-family: 'Inter', -apple-system, sans-serif; }
 
-    /* ── Hide Streamlit chrome (keep header for sidebar toggle) ── */
+    /* ── Hide Streamlit chrome (keep sidebar toggle only) ── */
     #MainMenu, footer { visibility: hidden; }
     div[data-testid="stDecoration"] { display: none; }
-    /* Minimal header — just the sidebar toggle */
+    /* Hide Streamlit Cloud toolbar (share/star/edit/deploy) */
+    div[data-testid="stToolbar"] { display: none !important; }
+    .stAppToolbar { display: none !important; }
+    /* Minimal header — just the sidebar toggle, no background */
     header[data-testid="stHeader"] {
         background: transparent !important;
         backdrop-filter: none !important;
+        height: 2.5rem !important;
     }
+    /* Hide the running man / status indicator */
+    div[data-testid="stStatusWidget"] { display: none !important; }
 
     /* ── Metrics cards ── */
     div[data-testid="stMetric"] {
