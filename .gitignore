@@ -23,8 +23,9 @@ env/
 watchlists.json
 KM*.csv
 
-# Score history - regenerates automatically, can get large
+# Cache files - auto-generated
 score_history.json
+fund_cache.json
 
 # Old/legacy files
 tickers.json

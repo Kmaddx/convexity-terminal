@@ -179,8 +179,7 @@ def grad_divider():
     st.markdown('<div class="grad-divider"></div>', unsafe_allow_html=True)
 
 DEFAULT_TICKERS = [
-    "AAPL", "NVDA", "TSLA", "PLTR", "RKLB", "HOOD", "SOFI",
-    "MSTR", "ASTS", "SMR"
+    "PLTR", "RKLB", "TSLA", "HOOD", "ASTS"
 ]
 
 TICKERS_FILE     = os.path.join(os.path.dirname(__file__), "tickers.json")
@@ -1019,15 +1018,58 @@ def fetch_etf_benchmark_data(etf_tickers):
             continue
     return pd.DataFrame(results)
 
+FUND_CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fund_cache.json")
+
+def _load_fund_cache():
+    """Load cached fundamental data from disk."""
+    try:
+        if os.path.exists(FUND_CACHE_FILE):
+            with open(FUND_CACHE_FILE) as f:
+                cache = json.load(f)
+            # Only use if less than 4 hours old
+            cached_at = cache.get("_ts", 0)
+            if (datetime.now().timestamp() - cached_at) < 14400:
+                return cache.get("data", {})
+    except Exception:
+        pass
+    return {}
+
+def _save_fund_cache(data_by_ticker):
+    """Save fundamental data to disk cache."""
+    try:
+        cache = {"_ts": datetime.now().timestamp(), "data": data_by_ticker}
+        with open(FUND_CACHE_FILE, "w") as f:
+            json.dump(cache, f)
+    except Exception:
+        pass
+
 @st.cache_data(ttl=1800, show_spinner=False)
 def fetch_fundamentals(tickers):
-    """Single call to yf.Ticker().info per ticker — covers both analyst/fundamental and valuation data."""
+    """Single call to yf.Ticker().info per ticker — covers both analyst/fundamental and valuation data.
+    Includes rate-limit mitigation: delays between requests + disk cache fallback."""
+    import time
     results = []
-    for t in tickers:
+    _disk_cache = _load_fund_cache()
+    _new_cache = {}
+    _rate_limited = False
+    for idx, t in enumerate(tickers):
         row = {"Ticker": t}
+        # Rate limit mitigation: add delay between requests (skip first)
+        if idx > 0:
+            time.sleep(1.5)
         try:
             obj  = yf.Ticker(t)
             info = obj.info
+            # Detect rate-limiting: info dict is empty or has no real data
+            if not info or (len(info) <= 2 and "trailingPegRatio" not in info):
+                _rate_limited = True
+                # Fall back to disk cache for this ticker
+                if t in _disk_cache:
+                    row.update(_disk_cache[t])
+                    results.append(row)
+                    continue
+                results.append(row)
+                continue
 
             # Analyst targets & recommendations
             target_mean = info.get("targetMeanPrice")
@@ -1139,16 +1181,33 @@ def fetch_fundamentals(tickers):
                 except Exception:
                     pass
         except Exception:
-            pass
+            # Rate-limited or error — try disk cache
+            if t in _disk_cache:
+                row.update(_disk_cache[t])
+        # Save successful data for cache
+        if len(row) > 1:  # more than just Ticker
+            _new_cache[t] = {k: v for k, v in row.items()
+                            if k != "Ticker" and not isinstance(v, (list, dict))
+                            and v is not None}
         results.append(row)
+    # Save to disk cache if we got any real data
+    if _new_cache and not _rate_limited:
+        _save_fund_cache(_new_cache)
+    elif _rate_limited and _disk_cache:
+        # Merge: keep old cache entries, add any new ones we managed to get
+        merged = {**_disk_cache, **_new_cache}
+        _save_fund_cache(merged)
     return pd.DataFrame(results)
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def fetch_extras(tickers):
+    import time
     results = []
-    for t in tickers:
+    for idx, t in enumerate(tickers):
         row = {"Ticker": t, "InsiderSignal": "N/A", "InsiderNet": 0,
                "EarningsBeats": None, "Headlines": [], "InsiderBuys": []}
+        if idx > 0:
+            time.sleep(1.0)
         try:
             obj = yf.Ticker(t)
             try:
