@@ -374,7 +374,7 @@ def _fetch_ticker_metadata(ticker):
 
 def auto_assign_themes(ticker, metadata=None):
     """Auto-assign a ticker to themes based on industry + business description + company name.
-    Returns list of matching theme names, or ['Other'] if no match."""
+    Falls back to yfinance sector if no specific theme matches."""
     if metadata is None:
         metadata = _fetch_ticker_metadata(ticker)
     industry = metadata.get("industry", "")
@@ -393,7 +393,11 @@ def auto_assign_themes(ticker, metadata=None):
         # Check company name keywords
         if name and any(kw in name for kw in rules.get("name_keywords", [])):
             matches.append(theme_name)
-    return matches if matches else ["Other"]
+    if matches:
+        return matches
+    # Fallback: use yfinance sector as a catch-all theme
+    sector = metadata.get("sector", "").title()
+    return [sector] if sector else ["Other"]
 
 def get_theme_tickers(themes_data):
     """Extract {theme_name: [user_tickers]} from the themes structure."""
@@ -2182,6 +2186,11 @@ for _col, _default in _expected_cols.items():
     if _col not in df_all.columns:
         df_all[_col] = _default
 
+# Auto-assign themes to each ticker
+df_all["Theme"] = df_all["Ticker"].apply(
+    lambda t: ", ".join(get_ticker_themes(st.session_state.themes, t))
+)
+
 # Execution window from portfolio RS data
 exec_window = calc_execution_window(df_all)
 
@@ -3049,9 +3058,20 @@ with tab_themes:
     )
 
     themes_data = st.session_state.themes
-    _user_tickers_map = get_theme_tickers(themes_data)
     _etf_tickers_map = get_theme_etfs(themes_data)
     _all_theme_names = list(themes_data.get("themes", {}).keys())
+
+    # Build ticker-to-theme mapping using auto-assignment
+    # This replaces the old manual _user_tickers_map
+    _user_tickers_map = {th: [] for th in _all_theme_names}
+    _user_tickers_map["Other"] = []
+    for _t in st.session_state.tickers:
+        _t_themes = get_ticker_themes(themes_data, _t)
+        for _th in _t_themes:
+            if _th in _user_tickers_map:
+                _user_tickers_map[_th].append(_t)
+            elif _th == "Other":
+                _user_tickers_map["Other"].append(_t)
 
     # Theme management
     with st.expander("Manage Themes", expanded=False):
@@ -3059,7 +3079,8 @@ with tab_themes:
         with mgmt_col1:
             st.markdown("**Move ticker to theme**")
             move_ticker = st.selectbox("Ticker", sorted(st.session_state.tickers), key="theme_move_ticker")
-            current_theme = next((th for th, tks in _user_tickers_map.items() if move_ticker in tks), "Untagged")
+            _auto_themes = get_ticker_themes(themes_data, move_ticker)
+            current_theme = ", ".join(_auto_themes) if _auto_themes else "Other"
             st.caption(f"Currently in: {current_theme}")
             target_theme = st.selectbox("Move to", _all_theme_names, key="theme_target")
             if st.button("Move", use_container_width=True, key="theme_move_btn"):
