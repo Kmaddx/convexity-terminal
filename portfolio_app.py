@@ -2004,37 +2004,9 @@ with st.sidebar:
     selected = st.multiselect("Filter view", st.session_state.tickers,
                                default=st.session_state.tickers)
     grad_divider()
-    st.subheader("AI Summary")
-    claude_key_input = st.text_input("Anthropic API key", type="password",
-                                      placeholder="sk-ant-...",
-                                      help="Get one at console.anthropic.com")
-    if claude_key_input:
-        st.session_state["claude_key"] = claude_key_input
-    st.caption("Used in Signals tab AI Summary section. ~$0.001 per ticker.")
-    grad_divider()
     # Single-ticker deep-dive selector
     st.subheader("Ticker Deep Dive")
     deep_dive_ticker = st.selectbox("Select ticker", ["--"] + sorted(st.session_state.tickers), key="deep_dive")
-    grad_divider()
-
-    # Score weight sliders
-    with st.expander("Score Weights"):
-        st.caption("Adjust asymmetry score component weights. Total does not need to equal 100.")
-        w_upside = st.slider("Analyst Upside", 0, 30, 15, key="w_upside")
-        w_beta = st.slider("Beta", 0, 40, 25, key="w_beta")
-        w_atr = st.slider("Volatility (ATR%)", 0, 40, 20, key="w_atr")
-        w_short = st.slider("Short Interest", 0, 40, 20, key="w_short")
-        w_rsi = st.slider("RSI Positioning", 0, 30, 15, key="w_rsi")
-        w_consensus = st.slider("Analyst Consensus", 0, 15, 5, key="w_consensus")
-    st.session_state["asym_weights"] = {
-        "Analyst Upside": w_upside,
-        "Beta": w_beta,
-        "Volatility (ATR%)": w_atr,
-        "Short Interest": w_short,
-        "RSI Positioning": w_rsi,
-        "Analyst Consensus": w_consensus,
-    }
-
     grad_divider()
 
     # Ideas & Roadmap (moved from tab)
