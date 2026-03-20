@@ -2047,6 +2047,16 @@ _fetched = set(df_price["Ticker"].tolist())
 _failed  = [t for t in st.session_state.tickers if t not in _fetched]
 if _failed:
     st.warning(f"Failed to fetch data for: **{', '.join(_failed)}**. These tickers are excluded from analysis.")
+if len(_fetched) == 0:
+    st.error(
+        "⚠️ **No data loaded.** Yahoo Finance is rate-limiting this server.  \n"
+        "This usually happens on Streamlit Cloud's shared infrastructure.  \n\n"
+        "**Options:**  \n"
+        "1. Wait a few minutes and refresh  \n"
+        "2. Run locally: `streamlit run portfolio_app.py`  \n"
+        "3. Clone from [GitHub](https://github.com/Kmaddx/convexity-terminal)"
+    )
+    st.stop()
 
 st.title("◣ Convexity Terminal")
 _data_ts = datetime.now().strftime('%Y-%m-%d %H:%M')
