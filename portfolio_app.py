@@ -307,7 +307,7 @@ THEME_RULES = {
         "desc_keywords": ["biotechnology company", "immunotherapy", "oncology drug"],
     },
     "Critical Materials": {
-        "industries": ["other industrial metals & mining", "coking coal"],
+        "industries": ["other industrial metals & mining", "coking coal", "coal", "industrial materials"],
         "desc_keywords": ["antimony", "lithium mining", "rare earth", "critical mineral",
                           "critical metal", "strategic mineral"],
     },
@@ -377,13 +377,53 @@ def _save_meta_cache(cache):
 
 _META_DISK_CACHE = _load_meta_cache()
 
+def _get_fmp_key():
+    """Get FMP API key from .env file or Streamlit secrets."""
+    # Check .env file
+    env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+    if os.path.exists(env_path):
+        try:
+            with open(env_path) as f:
+                for line in f:
+                    if line.startswith("FMP_API_KEY="):
+                        return line.strip().split("=", 1)[1]
+        except Exception:
+            pass
+    # Check Streamlit secrets
+    try:
+        return st.secrets.get("FMP_API_KEY", "")
+    except Exception:
+        return ""
+
 @st.cache_data(ttl=86400, show_spinner=False)
 def _fetch_ticker_metadata(ticker):
     """Fetch industry, description, and name for theme auto-assignment.
-    Falls back to disk cache when rate-limited."""
+    Tries FMP first (reliable on Cloud), then yfinance, then disk cache."""
+    # Try FMP profile first (works for all tickers, no rate limits)
+    fmp_key = _get_fmp_key()
+    if fmp_key:
+        try:
+            r = requests.get(
+                f"https://financialmodelingprep.com/stable/profile?symbol={ticker}&apikey={fmp_key}",
+                timeout=8)
+            if r.status_code == 200:
+                data = r.json()
+                if isinstance(data, list) and data:
+                    d = data[0]
+                    result = {
+                        "industry": (d.get("industry") or "").lower(),
+                        "sector": (d.get("sector") or "").lower(),
+                        "desc": (d.get("description") or "").lower(),
+                        "name": (d.get("companyName") or "").lower(),
+                    }
+                    _META_DISK_CACHE[ticker] = result
+                    _save_meta_cache(_META_DISK_CACHE)
+                    return result
+        except Exception:
+            pass
+    # Fallback: try yfinance
     try:
         info = yf.Ticker(ticker).info
-        # Check if we got real data
         if info and any(info.get(k) for k in ["industry", "sector", "longBusinessSummary"]):
             result = {
                 "industry": (info.get("industry") or "").lower(),
@@ -391,13 +431,12 @@ def _fetch_ticker_metadata(ticker):
                 "desc": (info.get("longBusinessSummary") or "").lower(),
                 "name": (info.get("shortName") or info.get("longName") or "").lower(),
             }
-            # Update disk cache
             _META_DISK_CACHE[ticker] = result
             _save_meta_cache(_META_DISK_CACHE)
             return result
     except Exception:
         pass
-    # Fallback to disk cache
+    # Final fallback: disk cache
     if ticker in _META_DISK_CACHE:
         return _META_DISK_CACHE[ticker]
     return {"industry": "", "sector": "", "desc": "", "name": ""}
@@ -410,10 +449,13 @@ def auto_assign_themes(ticker, metadata=None):
     industry = metadata.get("industry", "")
     desc = metadata.get("desc", "")
     name = metadata.get("name", "").lower()
+    # Normalize industry for matching (FMP uses "auto - manufacturers", yfinance uses "auto manufacturers")
+    industry_norm = industry.replace(" - ", " ").replace("-", " ").strip()
     matches = []
     for theme_name, rules in THEME_RULES.items():
-        # Check industry match
-        if industry and industry in [i.lower() for i in rules.get("industries", [])]:
+        # Check industry match (fuzzy: strip hyphens/dashes)
+        rule_industries = [i.lower().replace(" - ", " ").replace("-", " ") for i in rules.get("industries", [])]
+        if industry_norm and industry_norm in rule_industries:
             matches.append(theme_name)
             continue
         # Check description keywords (most specific)
