@@ -1999,6 +1999,24 @@ df_all["PillarTheme"]   = _pillar_results.apply(lambda d: d["thematic"])
 df_all["PillarNarr"]    = _pillar_results.apply(lambda d: d["narrative"])
 df_all["PillarAligned"] = _pillar_results.apply(lambda d: d["aligned"])
 
+# ── Ensure all expected columns exist (graceful fallback when APIs fail) ──
+_expected_cols = {
+    "NextEarnings": None, "InsiderSignal": None, "InsiderNet": 0,
+    "InsiderBuys": 0, "InsiderPct": 0, "EarningsBeats": None,
+    "NumAnalysts": 0, "Consensus": None, "Upside": None,
+    "ShortPct": None, "Beta": None, "ATR_pct": None, "RSI": None,
+    "FCF_yield": None, "ROE": None, "Revenue_Growth": None, "Rule40": None,
+    "Ret1m": None, "Ret3m": None, "Spark30": None,
+    "ST_BullPct": None, "ST_MsgCount": 0,
+    "RS_Score": None, "RS_Rank": None, "RS_Label": None,
+    "DownDayRS": None, "DownDayWinRate": None, "RecentDDExcess": None,
+    "EarlyBottom": None, "DaysSinceLow": None, "RS_1m": None, "RS_3m": None,
+    "Pos52": None, "Chg": None, "Price": None,
+}
+for _col, _default in _expected_cols.items():
+    if _col not in df_all.columns:
+        df_all[_col] = _default
+
 # Execution window from portfolio RS data
 exec_window = calc_execution_window(df_all)
 
