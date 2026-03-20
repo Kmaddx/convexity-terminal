@@ -1923,53 +1923,54 @@ with st.sidebar:
 
 # ── Load all data once ───────────────────────────────────────────────────────
 
-with st.spinner("Fetching price data..."):
+with st.status("◣ Loading Convexity Terminal...", expanded=True) as _status:
+    _status.update(label="◣ Scanning markets...", state="running")
+    st.write("⚡ Fetching price data...")
     df_price = fetch_price_data(st.session_state.tickers)
 
-if df_price.empty:
-    st.error("No data. Check internet connection.")
-    st.stop()
+    if df_price.empty:
+        _status.update(label="◣ Failed", state="error")
+        st.error("No data. Check internet connection.")
+        st.stop()
 
-with st.spinner("Loading fundamentals & valuation..."):
+    st.write("📊 Loading fundamentals & valuation...")
     df_fund = fetch_fundamentals(st.session_state.tickers)
 
-spy_ret = fetch_spy_returns()
-spy_close, spy_daily_ret = fetch_spy_daily()
+    spy_ret = fetch_spy_returns()
+    spy_close, spy_daily_ret = fetch_spy_daily()
 
-# Market environment data
-with st.spinner("Scanning market environment..."):
+    st.write("🌐 Scanning market environment...")
     market_env = fetch_market_environment()
     env_total, env_pillars, env_decision, env_decision_sub = calc_market_env_score(market_env)
 
-# Relative strength (down-day analysis)
-with st.spinner("Calculating relative strength..."):
+    st.write("💪 Calculating relative strength...")
     df_rs = calc_downday_rs(tuple(st.session_state.tickers), spy_close, spy_daily_ret)
 
-# Fetch ETF benchmark data for all themes
-_all_etf_tickers = get_all_etf_tickers(st.session_state.themes)
-df_etf = fetch_etf_benchmark_data(tuple(_all_etf_tickers)) if _all_etf_tickers else pd.DataFrame()
+    st.write("📡 Fetching theme benchmarks...")
+    _all_etf_tickers = get_all_etf_tickers(st.session_state.themes)
+    df_etf = fetch_etf_benchmark_data(tuple(_all_etf_tickers)) if _all_etf_tickers else pd.DataFrame()
 
-df_price = df_price[df_price["Ticker"].isin(selected)].copy()
+    df_price = df_price[df_price["Ticker"].isin(selected)].copy()
 
-# Pre-compute merged dataframe and scores (used across all tabs)
-df_all = df_price.merge(df_fund, on="Ticker", how="left")
-_asym_weights = st.session_state.get("asym_weights")
-df_all["ConvexityScore"] = df_all.apply(lambda r: calc_convexity_score(r, weights=_asym_weights), axis=1)
-df_all["MomentumScore"]  = df_all.apply(calc_momentum_score, axis=1)
-df_all["AsymmetryScore"]  = df_all.apply(lambda r: calc_asymmetry_score(r, weights=_asym_weights)[0], axis=1)
-df_all["VGScore"]      = df_all.apply(lambda r: calc_value_growth_score(r)[0], axis=1)
+    st.write("🧮 Computing scores...")
+    df_all = df_price.merge(df_fund, on="Ticker", how="left")
+    _asym_weights = st.session_state.get("asym_weights")
+    df_all["ConvexityScore"] = df_all.apply(lambda r: calc_convexity_score(r, weights=_asym_weights), axis=1)
+    df_all["MomentumScore"]  = df_all.apply(calc_momentum_score, axis=1)
+    df_all["AsymmetryScore"]  = df_all.apply(lambda r: calc_asymmetry_score(r, weights=_asym_weights)[0], axis=1)
+    df_all["VGScore"]      = df_all.apply(lambda r: calc_value_growth_score(r)[0], axis=1)
 
-# Fetch insider & news data early so it's available for Narrative pillar + Dashboard alerts
-with st.spinner("Loading news & insider data..."):
+    st.write("🔍 Loading news & insider signals...")
     df_extras = fetch_extras(tuple(st.session_state.tickers))
-df_all = df_all.merge(
-    df_extras[["Ticker", "InsiderSignal", "InsiderNet", "InsiderBuys", "EarningsBeats"]],
-    on="Ticker", how="left"
-)
+    df_all = df_all.merge(
+        df_extras[["Ticker", "InsiderSignal", "InsiderNet", "InsiderBuys", "EarningsBeats"]],
+        on="Ticker", how="left"
+    )
 
-# StockTwits sentiment (moved here so Narrative pillar can use it)
-with st.spinner("Loading sentiment..."):
+    st.write("💬 Loading sentiment...")
     st_data = fetch_stocktwits(tuple(st.session_state.tickers))
+
+    _status.update(label="◣ Terminal Ready", state="complete", expanded=False)
 # Merge sentiment into df_all
 df_all["ST_BullPct"] = df_all["Ticker"].map(lambda t: st_data.get(t, {}).get("bull_pct"))
 df_all["ST_MsgCount"] = df_all["Ticker"].map(lambda t: st_data.get(t, {}).get("msg_count", 0))
