@@ -1021,15 +1021,12 @@ def fetch_etf_benchmark_data(etf_tickers):
 FUND_CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fund_cache.json")
 
 def _load_fund_cache():
-    """Load cached fundamental data from disk."""
+    """Load cached fundamental data from disk. Uses any age as fallback — stale data > no data."""
     try:
         if os.path.exists(FUND_CACHE_FILE):
             with open(FUND_CACHE_FILE) as f:
                 cache = json.load(f)
-            # Only use if less than 4 hours old
-            cached_at = cache.get("_ts", 0)
-            if (datetime.now().timestamp() - cached_at) < 14400:
-                return cache.get("data", {})
+            return cache.get("data", {})
     except Exception:
         pass
     return {}
@@ -1060,14 +1057,14 @@ def fetch_fundamentals(tickers):
         try:
             obj  = yf.Ticker(t)
             info = obj.info
-            # Detect rate-limiting: info dict is empty or has no real data
-            if not info or (len(info) <= 2 and "trailingPegRatio" not in info):
+            # Detect rate-limiting: info dict is empty or missing key financial fields
+            _has_real_data = info and any(info.get(k) is not None for k in
+                ["currentPrice", "revenueGrowth", "marketCap", "freeCashflow"])
+            if not _has_real_data:
                 _rate_limited = True
                 # Fall back to disk cache for this ticker
                 if t in _disk_cache:
                     row.update(_disk_cache[t])
-                    results.append(row)
-                    continue
                 results.append(row)
                 continue
 

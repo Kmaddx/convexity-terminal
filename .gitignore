@@ -25,7 +25,6 @@ KM*.csv
 
 # Cache files - auto-generated
 score_history.json
-fund_cache.json
 
 # Old/legacy files
 tickers.json
