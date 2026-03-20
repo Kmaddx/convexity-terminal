@@ -272,15 +272,138 @@ def save_themes(themes_data):
     except Exception:
         pass
 
+# ── Auto-theme mapping ──
+# Maps tickers to themes using yfinance industry + business description keywords.
+# Priority order: description keywords (most specific) > industry match > fallback "Other"
+THEME_RULES = {
+    "Space & Satellite": {
+        "industries": [],
+        "desc_keywords": ["satellite", "rocket lab", "launch vehicle", "orbital", "spaceflight",
+                          "low earth orbit", "space station", "spaceport"],
+        "name_keywords": ["space", "rocket"],
+    },
+    "Uranium / Nuclear": {
+        "industries": [],
+        "desc_keywords": ["uranium", "nuclear fuel", "isotope separation", "enrichment",
+                          "small modular reactor", "nuclear reactor"],
+    },
+    "AI Semis": {
+        "industries": ["semiconductors", "semiconductor equipment & materials"],
+        "desc_keywords": ["semiconductor fabricat", "chip manufactur", "semiconductor company",
+                          "designs and sells semiconductor"],
+    },
+    "Crypto / Digital Assets": {
+        "industries": [],
+        "desc_keywords": ["bitcoin", "cryptocurrency", "blockchain", "stablecoin",
+                          "digital asset", "crypto mining", "bitcoin mining"],
+    },
+    "Biotech": {
+        "industries": ["biotechnology"],
+        "desc_keywords": ["biotechnology company", "immunotherapy", "oncology drug"],
+    },
+    "Critical Materials": {
+        "industries": ["other industrial metals & mining", "coking coal"],
+        "desc_keywords": ["antimony", "lithium mining", "rare earth", "critical mineral",
+                          "critical metal", "strategic mineral"],
+    },
+    "Defense & Drones": {
+        "industries": [],
+        "desc_keywords": ["defense contract", "defense system", "drone", "military",
+                          "unmanned aerial", "defense department", "tactical"],
+    },
+    "Fintech": {
+        "industries": [],
+        "desc_keywords": ["fintech", "trading platform", "brokerage service",
+                          "payment processing", "neobank", "commission-free trading"],
+    },
+    "EV & Autonomy": {
+        "industries": ["auto manufacturers"],
+        "desc_keywords": ["electric vehicle", "ev charging",
+                          "battery electric", "manufactures electric"],
+    },
+    "Cybersecurity": {
+        "industries": [],
+        "desc_keywords": ["cybersecurity", "cyber security", "threat detection",
+                          "endpoint security", "zero trust"],
+    },
+    "AI & Data": {
+        "industries": [],
+        "desc_keywords": ["artificial intelligence", "machine learning platform",
+                          "ai infrastructure", "ai industry", "generative ai",
+                          "data analytics platform", "full-stack infrastructure for ai"],
+    },
+    "Edge AI / IoT": {
+        "industries": [],
+        "desc_keywords": ["edge computing", "internet of things", "embedded system",
+                          "industrial computing", "edge ai", "ruggedized computing"],
+    },
+    "Clean Energy": {
+        "industries": ["solar"],
+        "desc_keywords": ["solar panel", "wind farm", "clean energy company",
+                          "renewable energy company"],
+    },
+    "Robotics & Automation": {
+        "industries": [],
+        "desc_keywords": ["robotics company", "industrial automation", "autonomous robot"],
+    },
+    "Quantum Computing": {
+        "industries": [],
+        "desc_keywords": ["quantum comput", "quantum processor", "qubit"],
+    },
+}
+
+@st.cache_data(ttl=86400, show_spinner=False)  # cache 24h — industry/description don't change often
+def _fetch_ticker_metadata(ticker):
+    """Fetch industry, description, and name for theme auto-assignment."""
+    try:
+        info = yf.Ticker(ticker).info
+        return {
+            "industry": (info.get("industry") or "").lower(),
+            "sector": (info.get("sector") or "").lower(),
+            "desc": (info.get("longBusinessSummary") or "").lower(),
+            "name": (info.get("shortName") or info.get("longName") or "").lower(),
+        }
+    except Exception:
+        return {"industry": "", "sector": "", "desc": "", "name": ""}
+
+def auto_assign_themes(ticker, metadata=None):
+    """Auto-assign a ticker to themes based on industry + business description + company name.
+    Returns list of matching theme names, or ['Other'] if no match."""
+    if metadata is None:
+        metadata = _fetch_ticker_metadata(ticker)
+    industry = metadata.get("industry", "")
+    desc = metadata.get("desc", "")
+    name = metadata.get("name", "").lower()
+    matches = []
+    for theme_name, rules in THEME_RULES.items():
+        # Check industry match
+        if industry and industry in [i.lower() for i in rules.get("industries", [])]:
+            matches.append(theme_name)
+            continue
+        # Check description keywords (most specific)
+        if desc and any(kw in desc for kw in rules.get("desc_keywords", [])):
+            matches.append(theme_name)
+            continue
+        # Check company name keywords
+        if name and any(kw in name for kw in rules.get("name_keywords", [])):
+            matches.append(theme_name)
+    return matches if matches else ["Other"]
+
 def get_theme_tickers(themes_data):
-    """Extract {theme_name: [user_tickers]} from the new themes structure."""
+    """Extract {theme_name: [user_tickers]} from the themes structure."""
     themes_dict = themes_data.get("themes", {})
     return {name: val.get("tickers", []) for name, val in themes_dict.items()}
 
 def get_ticker_themes(themes_data, ticker):
-    """Return a list of all theme names that contain this ticker (may be in multiple themes)."""
+    """Return themes for a ticker. Uses auto-assignment based on industry/description,
+    with manual overrides from themes.json taking priority."""
+    # Check manual overrides first
     themes_dict = themes_data.get("themes", {})
-    return [name for name, val in themes_dict.items() if ticker in val.get("tickers", [])]
+    manual = [name for name, val in themes_dict.items() if ticker in val.get("tickers", [])]
+    if manual:
+        return manual
+    # Auto-assign from metadata
+    return auto_assign_themes(ticker)
 
 def get_theme_etfs(themes_data):
     """Extract {theme_name: [etf_tickers]} from the new themes structure."""
