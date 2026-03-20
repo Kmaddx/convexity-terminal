@@ -19,6 +19,10 @@ env/
 .env
 *.env
 
+# Personal watchlists & portfolios (use watchlists.example.json as template)
+watchlists.json
+KM*.csv
+
 # Score history - regenerates automatically, can get large
 score_history.json
 

@@ -9,16 +9,172 @@ import json
 import os
 
 st.set_page_config(
-    page_title="Portfolio Analysis",
-    page_icon="📈",
+    page_title="Convexity Terminal",
+    page_icon="◣",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
+st.markdown("""
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+    /* ── Base layout ── */
+    .block-container { padding-top: 0.75rem; padding-bottom: 0rem; max-width: 100%; }
+    div[data-testid="stVerticalBlock"] > div { gap: 0.4rem; }
+    .main .block-container { font-family: 'Inter', -apple-system, sans-serif; }
+
+    /* ── Hide Streamlit chrome (keep header for sidebar toggle) ── */
+    #MainMenu, footer { visibility: hidden; }
+    div[data-testid="stDecoration"] { display: none; }
+    /* Minimal header — just the sidebar toggle */
+    header[data-testid="stHeader"] {
+        background: transparent !important;
+        backdrop-filter: none !important;
+    }
+
+    /* ── Metrics cards ── */
+    div[data-testid="stMetric"] {
+        background: linear-gradient(135deg, #161b22 0%, #1c2333 100%);
+        padding: 10px 14px; border-radius: 8px;
+        border: 1px solid #30363d;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+    }
+    div[data-testid="stMetric"] label {
+        font-family: 'Inter', sans-serif; font-size: 0.7rem;
+        color: #8b949e; text-transform: uppercase; letter-spacing: 0.5px;
+    }
+    div[data-testid="stMetric"] div[data-testid="stMetricValue"] {
+        font-family: 'JetBrains Mono', monospace; font-size: 1.15rem; font-weight: 600;
+    }
+    div[data-testid="stMetric"] div[data-testid="stMetricDelta"] {
+        font-family: 'JetBrains Mono', monospace; font-size: 0.75rem;
+    }
+
+    /* ── Tabs ── */
+    button[data-baseweb="tab"] {
+        font-family: 'Inter', sans-serif; font-size: 0.8rem; font-weight: 500;
+        letter-spacing: 0.3px; text-transform: uppercase;
+        padding: 8px 16px;
+    }
+    button[data-baseweb="tab"][aria-selected="true"] {
+        border-bottom: 2px solid #58a6ff !important;
+        color: #58a6ff !important;
+    }
+    div[data-baseweb="tab-border"] { background-color: #21262d !important; }
+
+    /* ── Dataframe tables ── */
+    div[data-testid="stDataFrame"] {
+        border: 1px solid #30363d; border-radius: 8px; overflow: hidden;
+    }
+    div[data-testid="stDataFrame"] table { font-family: 'JetBrains Mono', monospace; font-size: 0.78rem; }
+
+    /* ── Expanders ── */
+    details[data-testid="stExpander"] {
+        border: 1px solid #30363d; border-radius: 8px;
+        background-color: #161b22;
+    }
+    details[data-testid="stExpander"] summary {
+        font-family: 'Inter', sans-serif; font-weight: 500;
+    }
+
+    /* ── Section headers ── */
+    .section-header {
+        display: flex; align-items: center; gap: 8px;
+        padding: 8px 0 6px 0; margin-top: 4px;
+        border-bottom: 2px solid #21262d;
+        font-family: 'Inter', sans-serif; font-weight: 600; font-size: 1rem;
+        color: #e6edf3; letter-spacing: 0.3px;
+    }
+    .section-header .accent {
+        width: 3px; height: 20px; border-radius: 2px; flex-shrink: 0;
+    }
+
+    /* ── Alert cards ── */
+    .alert-card {
+        padding: 10px 14px; border-radius: 8px; margin: 4px 0;
+        font-family: 'Inter', sans-serif; font-size: 0.82rem;
+        border-left: 3px solid; line-height: 1.5;
+    }
+    .alert-card.green { background: #0d1f17; border-color: #2ecc71; color: #a3d9b1; }
+    .alert-card.red { background: #1f0d0d; border-color: #e74c3c; color: #d9a3a3; }
+    .alert-card.amber { background: #1f1a0d; border-color: #f39c12; color: #d9c9a3; }
+    .alert-card.blue { background: #0d141f; border-color: #3498db; color: #a3c4d9; }
+
+    /* ── KPI row ── */
+    .kpi-card {
+        background: linear-gradient(135deg, #161b22 0%, #1c2333 100%);
+        border: 1px solid #30363d; border-radius: 8px;
+        padding: 12px 16px; text-align: center;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+    }
+    .kpi-label {
+        font-family: 'Inter', sans-serif; font-size: 0.65rem;
+        color: #8b949e; text-transform: uppercase; letter-spacing: 0.8px;
+        margin-bottom: 4px;
+    }
+    .kpi-value {
+        font-family: 'JetBrains Mono', monospace; font-size: 1.4rem;
+        font-weight: 700; line-height: 1.2;
+    }
+    .kpi-sub {
+        font-family: 'Inter', sans-serif; font-size: 0.7rem; color: #8b949e;
+        margin-top: 2px;
+    }
+
+    /* ── Plotly chart containers ── */
+    div[data-testid="stPlotlyChart"] {
+        border: 1px solid #21262d; border-radius: 8px; overflow: hidden;
+    }
+
+    /* ── Gradient divider ── */
+    .grad-divider {
+        height: 1px; margin: 12px 0;
+        background: linear-gradient(90deg, transparent 0%, #30363d 20%, #30363d 80%, transparent 100%);
+    }
+
+    /* ── Sidebar ── */
+    section[data-testid="stSidebar"] {
+        background-color: #0d1117;
+        border-right: 1px solid #21262d;
+    }
+    section[data-testid="stSidebar"] .block-container { padding-top: 1rem; }
+
+    /* ── Download buttons ── */
+    button[data-testid="stDownloadButton"] {
+        font-family: 'Inter', sans-serif; font-size: 0.75rem;
+        border: 1px solid #30363d; border-radius: 6px;
+        background-color: #161b22;
+    }
+
+    /* ── Captions ── */
+    div[data-testid="stCaptionContainer"] {
+        font-family: 'Inter', sans-serif; font-size: 0.72rem; color: #8b949e;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# ── Helper functions for styled UI elements ──
+def section_header(title, accent_color="#58a6ff"):
+    """Render a styled section header with accent bar."""
+    st.markdown(
+        f'<div class="section-header">'
+        f'<span class="accent" style="background-color:{accent_color};"></span>'
+        f'{title}</div>',
+        unsafe_allow_html=True,
+    )
+
+def alert_card(text, color="blue"):
+    """Render a styled alert card. color: green/red/amber/blue."""
+    st.markdown(f'<div class="alert-card {color}">{text}</div>', unsafe_allow_html=True)
+
+def grad_divider():
+    """Render a subtle gradient divider."""
+    st.markdown('<div class="grad-divider"></div>', unsafe_allow_html=True)
+
 DEFAULT_TICKERS = [
-    "IREN", "CIFR", "RKLB", "ONDS", "NBIS", "CRCL", "ASTS", "HOOD",
-    "AREC", "ASPI", "MSTR", "BITF", "BMNR", "LTRX", "OSS",
-    "UAMY", "TSLA", "PLTR"
+    "AAPL", "NVDA", "TSLA", "PLTR", "RKLB", "HOOD", "SOFI",
+    "MSTR", "ASTS", "SMR"
 ]
 
 TICKERS_FILE     = os.path.join(os.path.dirname(__file__), "tickers.json")
@@ -233,8 +389,11 @@ def pos_color(v):
 
 DARK = dict(
     plot_bgcolor="#0d1117", paper_bgcolor="#0d1117",
-    font=dict(color="#e6edf3"),
+    font=dict(color="#e6edf3", family="Inter, -apple-system, sans-serif", size=12),
     xaxis_gridcolor="#21262d", yaxis_gridcolor="#21262d",
+    xaxis_linecolor="#30363d", yaxis_linecolor="#30363d",
+    xaxis_zeroline=False, yaxis_zeroline=False,
+    hoverlabel=dict(bgcolor="#1c2333", bordercolor="#30363d", font=dict(family="Inter, sans-serif", size=12, color="#e6edf3")),
 )
 
 # ── Data Fetching ────────────────────────────────────────────────────────────
@@ -268,6 +427,8 @@ def fetch_price_data(tickers):
             ret_1m  = round(((price / close.iloc[-22]) - 1) * 100, 1) if len(close) >= 22 else None
             ret_3m  = round(((price / close.iloc[-63]) - 1) * 100, 1) if len(close) >= 63 else None
             ret_6m  = round(((price / close.iloc[-126]) - 1) * 100, 1) if len(close) >= 126 else None
+            # Last 30 closes for sparkline
+            spark_30 = close.iloc[-30:].tolist() if len(close) >= 30 else close.tolist()
             results.append(dict(
                 Ticker=t, Price=round(price,2),
                 RSI=round(rsi,1), vsMA50=round(vs50,1),
@@ -276,10 +437,24 @@ def fetch_price_data(tickers):
                 Low52=round(w52l,2), High52=round(w52h,2),
                 RelVol=rel_vol, Breakout=breakout,
                 Ret1m=ret_1m, Ret3m=ret_3m, Ret6m=ret_6m,
+                Spark30=spark_30,
             ))
         except Exception:
             continue
     return pd.DataFrame(results)
+
+@st.cache_data(ttl=300, show_spinner=False)
+def fetch_spy_daily():
+    """Fetch SPY 1y daily close & daily returns. Used for down-day RS analysis."""
+    try:
+        df = yf.download("SPY", period="1y", interval="1d", progress=False, auto_adjust=True)
+        if df.empty:
+            return pd.Series(dtype=float), pd.Series(dtype=float)
+        close = df["Close"].squeeze()
+        daily_ret = close.pct_change().dropna()
+        return close, daily_ret
+    except Exception:
+        return pd.Series(dtype=float), pd.Series(dtype=float)
 
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_spy_returns():
@@ -300,6 +475,389 @@ def fetch_spy_returns():
         return ret
     except Exception:
         return {}
+
+# ── Market Environment ────────────────────────────────────────────────────────
+
+SECTOR_ETFS = ["XLK", "XLE", "XLF", "XLV", "XLI", "XLY", "XLP", "XLU", "XLC", "XLRE", "XLB"]
+
+@st.cache_data(ttl=300, show_spinner=False)
+def fetch_market_environment():
+    """Fetch market-wide data for environment scoring.
+    Returns dict with VIX, SPX, QQQ, sector, yield, and DXY data.
+    """
+    env = {}
+    try:
+        # VIX
+        vix_df = yf.download("^VIX", period="1y", interval="1d", progress=False, auto_adjust=True)
+        if not vix_df.empty:
+            vix_close = vix_df["Close"].squeeze()
+            env["vix_level"] = round(float(vix_close.iloc[-1]), 2)
+            env["vix_ma20"] = round(float(vix_close.rolling(20).mean().iloc[-1]), 2)
+            env["vix_pct_rank"] = round(float(
+                (vix_close.iloc[-1] > vix_close.iloc[-252:]).mean() * 100
+            ) if len(vix_close) >= 252 else 50, 0)
+            env["vix_rising"] = bool(vix_close.iloc[-1] > vix_close.iloc[-5])
+
+        # SPX
+        spx_df = yf.download("^GSPC", period="1y", interval="1d", progress=False, auto_adjust=True)
+        if not spx_df.empty:
+            spx = spx_df["Close"].squeeze()
+            env["spx_price"] = round(float(spx.iloc[-1]), 2)
+            env["spx_vs_20d"] = round(float((spx.iloc[-1] / spx.rolling(20).mean().iloc[-1] - 1) * 100), 2)
+            env["spx_vs_50d"] = round(float((spx.iloc[-1] / spx.rolling(50).mean().iloc[-1] - 1) * 100), 2)
+            env["spx_vs_200d"] = round(float((spx.iloc[-1] / spx.rolling(200).mean().iloc[-1] - 1) * 100), 2) if len(spx) >= 200 else None
+
+        # QQQ
+        qqq_df = yf.download("QQQ", period="1y", interval="1d", progress=False, auto_adjust=True)
+        if not qqq_df.empty:
+            qqq = qqq_df["Close"].squeeze()
+            env["qqq_price"] = round(float(qqq.iloc[-1]), 2)
+            env["qqq_vs_50d"] = round(float((qqq.iloc[-1] / qqq.rolling(50).mean().iloc[-1] - 1) * 100), 2)
+            env["qqq_ret_1m"] = round(float((qqq.iloc[-1] / qqq.iloc[-22] - 1) * 100), 1) if len(qqq) >= 22 else None
+
+        # Sector ETFs — % above 50d MA, daily returns
+        sector_data = {}
+        for etf in SECTOR_ETFS:
+            try:
+                s_df = yf.download(etf, period="3mo", interval="1d", progress=False, auto_adjust=True)
+                if not s_df.empty:
+                    s_close = s_df["Close"].squeeze()
+                    ma50 = s_close.rolling(50).mean().iloc[-1]
+                    ret_1d = round(float((s_close.iloc[-1] / s_close.iloc[-2] - 1) * 100), 2) if len(s_close) >= 2 else 0
+                    ret_5d = round(float((s_close.iloc[-1] / s_close.iloc[-5] - 1) * 100), 2) if len(s_close) >= 5 else 0
+                    above_50 = bool(s_close.iloc[-1] > ma50)
+                    sector_data[etf] = {
+                        "ret_1d": ret_1d, "ret_5d": ret_5d,
+                        "above_50d": above_50, "price": round(float(s_close.iloc[-1]), 2),
+                    }
+            except Exception:
+                pass
+        env["sectors"] = sector_data
+        env["sectors_above_50d"] = sum(1 for s in sector_data.values() if s["above_50d"])
+        env["sectors_positive_1d"] = sum(1 for s in sector_data.values() if s["ret_1d"] > 0)
+        env["sector_leader"] = max(sector_data.items(), key=lambda x: x[1]["ret_5d"])[0] if sector_data else None
+        env["sector_laggard"] = min(sector_data.items(), key=lambda x: x[1]["ret_5d"])[0] if sector_data else None
+
+        # 10Y yield
+        tnx_df = yf.download("^TNX", period="6mo", interval="1d", progress=False, auto_adjust=True)
+        if not tnx_df.empty:
+            tnx = tnx_df["Close"].squeeze()
+            env["tnx_yield"] = round(float(tnx.iloc[-1]), 2)
+            env["tnx_vs_20d"] = round(float((tnx.iloc[-1] / tnx.rolling(20).mean().iloc[-1] - 1) * 100), 2)
+            env["tnx_rising"] = bool(tnx.iloc[-1] > tnx.iloc[-5])
+
+        # DXY
+        dxy_df = yf.download("DX-Y.NYB", period="6mo", interval="1d", progress=False, auto_adjust=True)
+        if not dxy_df.empty:
+            dxy = dxy_df["Close"].squeeze()
+            env["dxy_level"] = round(float(dxy.iloc[-1]), 2)
+            env["dxy_vs_20d"] = round(float((dxy.iloc[-1] / dxy.rolling(20).mean().iloc[-1] - 1) * 100), 2)
+            env["dxy_strengthening"] = bool(dxy.iloc[-1] > dxy.iloc[-5])
+
+    except Exception:
+        pass
+    return env
+
+
+def calc_market_env_score(env):
+    """Score market environment 0-100 across 5 pillars. Returns total, pillar dict, and decision."""
+    pillars = {}
+
+    # ── 1. Volatility (0-100, lower VIX = higher score) ──
+    vix = env.get("vix_level", 20)
+    vix_pct = env.get("vix_pct_rank", 50)
+    vix_rising = env.get("vix_rising", False)
+    if vix <= 15:
+        vol_score = 90
+    elif vix <= 20:
+        vol_score = 70
+    elif vix <= 25:
+        vol_score = 45
+    elif vix <= 30:
+        vol_score = 25
+    else:
+        vol_score = 10
+    # Penalize if VIX is rising and elevated
+    if vix_rising and vix > 20:
+        vol_score = max(vol_score - 15, 0)
+    # Penalize high percentile rank (elevated vs history)
+    if vix_pct > 75:
+        vol_score = max(vol_score - 10, 0)
+    pillars["Volatility"] = {"score": round(vol_score), "weight": 25}
+
+    # ── 2. Trend (0-100, price vs MAs) ──
+    spx_20 = env.get("spx_vs_20d", 0)
+    spx_50 = env.get("spx_vs_50d", 0)
+    spx_200 = env.get("spx_vs_200d", 0)
+    trend_score = 0
+    # Above 200d = base strength (30 pts)
+    if spx_200 is not None:
+        if spx_200 > 0:
+            trend_score += min(spx_200, 5) / 5 * 30
+        else:
+            trend_score += max(0, 30 + spx_200 * 3)  # lose 3pts per % below
+    else:
+        trend_score += 15  # no data, neutral
+    # Above 50d = intermediate trend (40 pts)
+    if spx_50 > 0:
+        trend_score += min(spx_50, 5) / 5 * 40
+    else:
+        trend_score += max(0, 40 + spx_50 * 4)
+    # Above 20d = near-term trend (30 pts)
+    if spx_20 > 0:
+        trend_score += min(spx_20, 3) / 3 * 30
+    else:
+        trend_score += max(0, 30 + spx_20 * 5)
+    trend_score = max(0, min(100, trend_score))
+    # QQQ confirmation
+    qqq_50 = env.get("qqq_vs_50d", 0)
+    if qqq_50 < -3:
+        trend_score = max(trend_score - 10, 0)
+    pillars["Trend"] = {"score": round(trend_score), "weight": 25}
+
+    # ── 3. Breadth (0-100, sector participation) ──
+    above_50d = env.get("sectors_above_50d", 6)
+    pos_1d = env.get("sectors_positive_1d", 6)
+    total_sectors = len(SECTOR_ETFS)
+    # % sectors above 50d MA (60 pts)
+    breadth_score = (above_50d / total_sectors) * 60
+    # % sectors positive today (40 pts)
+    breadth_score += (pos_1d / total_sectors) * 40
+    pillars["Breadth"] = {"score": round(breadth_score), "weight": 20}
+
+    # ── 4. Momentum (0-100, sector strength & rotation) ──
+    sectors = env.get("sectors", {})
+    if sectors:
+        ret_5d_vals = [s["ret_5d"] for s in sectors.values()]
+        avg_5d = np.mean(ret_5d_vals) if ret_5d_vals else 0
+        positive_5d = sum(1 for r in ret_5d_vals if r > 0)
+        # Average sector 5d return scaled (50 pts)
+        mom_score = min(max((avg_5d + 3) / 6, 0), 1) * 50
+        # Participation — how many sectors positive over 5d (50 pts)
+        mom_score += (positive_5d / len(ret_5d_vals)) * 50 if ret_5d_vals else 25
+    else:
+        mom_score = 50
+    pillars["Momentum"] = {"score": round(mom_score), "weight": 15}
+
+    # ── 5. Macro (0-100, yield + dollar headwinds) ──
+    macro_score = 50  # neutral baseline
+    tnx = env.get("tnx_yield", 4.0)
+    tnx_rising = env.get("tnx_rising", False)
+    dxy_str = env.get("dxy_strengthening", False)
+    # Lower yields better for growth stocks
+    if tnx < 3.5:
+        macro_score += 25
+    elif tnx < 4.0:
+        macro_score += 15
+    elif tnx > 4.5:
+        macro_score -= 15
+    elif tnx > 5.0:
+        macro_score -= 25
+    # Rising yields = headwind
+    if tnx_rising:
+        macro_score -= 10
+    # Strengthening dollar = headwind for risk
+    if dxy_str:
+        macro_score -= 10
+    macro_score = max(0, min(100, macro_score))
+    pillars["Macro"] = {"score": round(macro_score), "weight": 15}
+
+    # ── Weighted total ──
+    total_weight = sum(p["weight"] for p in pillars.values())
+    total = sum(p["score"] * p["weight"] for p in pillars.values()) / total_weight
+    total = round(total)
+
+    # Decision
+    if total >= 65:
+        decision = "OPPORTUNITY"
+        decision_sub = "Conditions favor adding to positions"
+    elif total >= 45:
+        decision = "SELECTIVE"
+        decision_sub = "Pick your spots — quality setups only"
+    else:
+        decision = "DEFENSIVE"
+        decision_sub = "Preserve capital — wait for better entries"
+
+    return total, pillars, decision, decision_sub
+
+
+def calc_execution_window(df_all):
+    """Assess execution quality from portfolio RS data.
+    Returns dict with breakout/leader/pullback health signals.
+    """
+    result = {}
+    n = len(df_all)
+    if n == 0:
+        return {"score": 0, "breakouts_working": "N/A", "leaders_holding": "N/A",
+                "pullbacks_bought": "N/A", "follow_through": "N/A"}
+
+    # Breakouts working? — stocks near 52w high that are holding
+    breakout_tickers = df_all[df_all["Pos52"] >= 90]
+    if len(breakout_tickers) > 0:
+        held = breakout_tickers[breakout_tickers["vsMA50"] > 0]
+        result["breakouts_working"] = "Yes" if len(held) / len(breakout_tickers) >= 0.6 else "No"
+    else:
+        result["breakouts_working"] = "None active"
+
+    # Leaders holding? — RS Leaders still above 50d MA
+    if "RS_Label" in df_all.columns:
+        leaders = df_all[df_all["RS_Label"] == "Leader"]
+        if len(leaders) > 0:
+            holding = leaders[leaders["vsMA50"] > -5]
+            result["leaders_holding"] = "Yes" if len(holding) / len(leaders) >= 0.6 else "Fading"
+        else:
+            result["leaders_holding"] = "None"
+    else:
+        result["leaders_holding"] = "N/A"
+
+    # Pullbacks getting bought? — stocks 5-15% off high with RSI 40-55 (basing)
+    pullback = df_all[(df_all["Pos52"] >= 50) & (df_all["Pos52"] <= 85) & (df_all["RSI"] >= 40) & (df_all["RSI"] <= 55)]
+    if len(pullback) > 0:
+        bought = pullback[pullback["vsMA50"] > -3]
+        result["pullbacks_bought"] = "Yes" if len(bought) / len(pullback) >= 0.5 else "No"
+    else:
+        result["pullbacks_bought"] = "N/A"
+
+    # Follow-through — trending stocks making progress
+    trending = df_all[df_all["SetupStage"].isin(["Trending", "Emerging"])]
+    if len(trending) >= 2:
+        strong_ft = trending[trending["Ret1m"].apply(lambda x: _safe(x, 0)) > 0]
+        ratio = len(strong_ft) / len(trending)
+        if ratio >= 0.6:
+            result["follow_through"] = "Strong"
+        elif ratio >= 0.35:
+            result["follow_through"] = "Weak"
+        else:
+            result["follow_through"] = "None"
+    else:
+        result["follow_through"] = "N/A"
+
+    # Execution score
+    score_map = {"Yes": 25, "Strong": 25, "Weak": 10, "No": 0, "Fading": 5,
+                 "None active": 10, "None": 5, "N/A": 10}
+    exec_score = (
+        score_map.get(result["breakouts_working"], 10) +
+        score_map.get(result["leaders_holding"], 10) +
+        score_map.get(result["pullbacks_bought"], 10) +
+        score_map.get(result["follow_through"], 10)
+    )
+    result["score"] = exec_score
+    return result
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def calc_downday_rs(tickers, spy_close, spy_daily_ret):
+    """Calculate relative strength on SPY down-days for each ticker.
+
+    Core idea from ZA: "What isn't going lower?" — stocks that hold up on market
+    down-days are being accumulated by institutions. This is one of the clearest
+    signals the market can give you.
+
+    Returns DataFrame with columns:
+    - Ticker, DownDayRS (avg excess return on SPY down-days, higher = stronger),
+    - DownDayWinRate (% of SPY down-days where stock outperformed SPY),
+    - RS_Score (0-100 composite), RS_Label (Leader/Holding/Lagging),
+    - RecentRS_1m, RecentRS_3m (period relative strength vs SPY),
+    - EarlyBottom (bool — stock's 20d low came before SPY's 20d low),
+    - DaysSinceLow (how many days since the stock's recent low)
+    """
+    if spy_close.empty or spy_daily_ret.empty:
+        return pd.DataFrame()
+
+    # Identify SPY down-days (bottom 40% of daily returns ≈ meaningfully negative days)
+    threshold = spy_daily_ret.quantile(0.40)
+    down_days = spy_daily_ret[spy_daily_ret <= threshold].index
+
+    # Also get recent 1m down-days for recency weighting
+    recent_cutoff_1m = spy_daily_ret.index[-22] if len(spy_daily_ret) >= 22 else spy_daily_ret.index[0]
+    recent_down_days = [d for d in down_days if d >= recent_cutoff_1m]
+
+    results = []
+    for t in tickers:
+        try:
+            df = yf.download(t, period="1y", interval="1d", progress=False, auto_adjust=True)
+            if df.empty or len(df) < 50:
+                continue
+            close = df["Close"].squeeze()
+            stock_ret = close.pct_change().dropna()
+
+            # Align dates
+            common = stock_ret.index.intersection(spy_daily_ret.index)
+            if len(common) < 30:
+                continue
+            s_ret = stock_ret.reindex(common)
+            spy_r = spy_daily_ret.reindex(common)
+
+            # Down-day analysis (all down-days)
+            dd_idx = [d for d in down_days if d in common]
+            if len(dd_idx) < 5:
+                continue
+            stock_on_dd = s_ret.loc[dd_idx]
+            spy_on_dd = spy_r.loc[dd_idx]
+            excess_on_dd = stock_on_dd - spy_on_dd  # positive = outperformed on down-day
+
+            dd_rs = round(excess_on_dd.mean() * 100, 3)  # avg daily excess on down-days (%)
+            dd_win_rate = round((excess_on_dd > 0).sum() / len(excess_on_dd) * 100, 1)
+
+            # Recent down-day RS (last month only) — more weight to current behaviour
+            recent_dd_idx = [d for d in recent_down_days if d in common]
+            if len(recent_dd_idx) >= 3:
+                recent_excess = (s_ret.loc[recent_dd_idx] - spy_r.loc[recent_dd_idx]).mean() * 100
+            else:
+                recent_excess = dd_rs  # fall back to full-period
+
+            # Period RS (simple returns vs SPY)
+            price = close.iloc[-1]
+            rs_1m = round(((price / close.iloc[-22]) - 1) * 100 - ((spy_close.iloc[-1] / spy_close.iloc[-22]) - 1) * 100, 1) if len(close) >= 22 and len(spy_close) >= 22 else 0
+            rs_3m = round(((price / close.iloc[-63]) - 1) * 100 - ((spy_close.iloc[-1] / spy_close.iloc[-63]) - 1) * 100, 1) if len(close) >= 63 and len(spy_close) >= 63 else 0
+
+            # Early bottoming: did the stock make its 20-day low before SPY?
+            lookback = min(60, len(close) - 1, len(spy_close) - 1)
+            stock_low_idx = close.iloc[-lookback:].idxmin()
+            spy_low_idx = spy_close.iloc[-lookback:].idxmin()
+            early_bottom = bool(stock_low_idx < spy_low_idx) if pd.notna(stock_low_idx) and pd.notna(spy_low_idx) else False
+            days_since_low = (close.index[-1] - stock_low_idx).days if pd.notna(stock_low_idx) else 0
+
+            # Composite RS Score (0-100)
+            # 35% down-day win rate, 25% recent down-day excess, 25% 1m RS, 15% early bottom bonus
+            score = 0
+            score += min(max((dd_win_rate - 30) / 40, 0), 1.0) * 35  # 30-70% win rate maps to 0-35
+            score += min(max((recent_excess + 1) / 2, 0), 1.0) * 25  # -1% to +1% maps to 0-25
+            score += min(max((rs_1m + 15) / 30, 0), 1.0) * 25  # -15% to +15% maps to 0-25
+            score += (15 if early_bottom else 0)
+            score = round(min(score, 100), 1)
+
+            results.append({
+                "Ticker": t,
+                "DownDayRS": round(dd_rs, 2),
+                "DownDayWinRate": dd_win_rate,
+                "RecentDDExcess": round(recent_excess, 2),
+                "RS_1m": rs_1m,
+                "RS_3m": rs_3m,
+                "RS_Score": score,
+                "EarlyBottom": early_bottom,
+                "DaysSinceLow": days_since_low,
+            })
+        except Exception:
+            continue
+
+    if not results:
+        return pd.DataFrame()
+
+    df_rs = pd.DataFrame(results).sort_values("RS_Score", ascending=False)
+    # Rank and label
+    df_rs["RS_Rank"] = range(1, len(df_rs) + 1)
+    n = len(df_rs)
+    def _label(rank):
+        if rank <= max(1, n * 0.25):
+            return "Leader"
+        elif rank <= max(2, n * 0.60):
+            return "Holding"
+        else:
+            return "Lagging"
+    df_rs["RS_Label"] = df_rs["RS_Rank"].apply(_label)
+    return df_rs
+
 
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_etf_benchmark_data(etf_tickers):
@@ -400,6 +958,12 @@ def fetch_fundamentals(tickers):
             row["InstitPct"]   = round((info.get("heldPercentInstitutions") or 0) * 100, 1)
             row["DaysToCover"] = info.get("shortRatio")
 
+            # Extended hours
+            post_chg = info.get("postMarketChangePercent")
+            pre_chg = info.get("preMarketChangePercent")
+            row["PostMktChg"] = round(post_chg, 2) if post_chg is not None else None
+            row["PreMktChg"] = round(pre_chg, 2) if pre_chg is not None else None
+
             # Historical P/S range (3 years)
             shares = info.get("sharesOutstanding")
             if shares and ps:
@@ -451,7 +1015,7 @@ def fetch_extras(tickers):
     results = []
     for t in tickers:
         row = {"Ticker": t, "InsiderSignal": "N/A", "InsiderNet": 0,
-               "EarningsBeats": None, "Headlines": []}
+               "EarningsBeats": None, "Headlines": [], "InsiderBuys": []}
         try:
             obj = yf.Ticker(t)
             try:
@@ -485,11 +1049,38 @@ def fetch_extras(tickers):
                         else:
                             recent = ins
                     tx_col = next((c for c in recent.columns
-                                   if "transaction" in c.lower() or "text" in c.lower()), None)
+                                   if "text" in c.lower()), None)
+                    if tx_col is None:
+                        tx_col = next((c for c in recent.columns
+                                       if "transaction" in c.lower()), None)
                     if tx_col is not None:
                         tx = recent[tx_col].astype(str).str.lower()
-                        buys  = tx.str.contains("buy|purchase|acquisition", na=False).sum()
-                        sells = tx.str.contains("sell|sale|disposition", na=False).sum()
+                        buy_mask  = tx.str.contains("buy|purchase|acquisition", na=False)
+                        sell_mask = tx.str.contains("sell|sale|disposition", na=False)
+                        buys  = int(buy_mask.sum())
+                        sells = int(sell_mask.sum())
+                        # Capture buy details for display
+                        buy_details = []
+                        if buys > 0:
+                            buy_rows = recent[buy_mask]
+                            for _, br in buy_rows.iterrows():
+                                detail = {}
+                                detail["insider"] = br.get("Insider", "Unknown")
+                                detail["position"] = br.get("Position", "")
+                                date_val = br.get("Start Date", "")
+                                if pd.notna(date_val):
+                                    try:
+                                        detail["date"] = pd.to_datetime(date_val).strftime("%b %d")
+                                    except Exception:
+                                        detail["date"] = str(date_val)[:10]
+                                else:
+                                    detail["date"] = ""
+                                val = br.get("Value", 0)
+                                detail["value"] = float(val) if pd.notna(val) else 0
+                                shares = br.get("Shares", 0)
+                                detail["shares"] = int(shares) if pd.notna(shares) else 0
+                                buy_details.append(detail)
+                        row["InsiderBuys"] = buy_details
                     else:
                         buys, sells = 0, 0
                     net = int(buys) - int(sells)
@@ -517,7 +1108,7 @@ def fetch_extras(tickers):
         results.append(row)
     return pd.DataFrame(results)
 
-@st.cache_data(ttl=900, show_spinner=False)
+@st.cache_data(ttl=1800, show_spinner=False)
 def fetch_stocktwits(tickers):
     out = {}
     for t in tickers:
@@ -541,6 +1132,149 @@ def fetch_stocktwits(tickers):
         except Exception:
             pass
     return out
+
+# ── Scanner: Universe Sourcing ────────────────────────────────────────────────
+
+@st.cache_data(ttl=600, show_spinner=False)
+def scan_yahoo_screener(min_mcap=200_000_000, max_mcap=10_000_000_000, min_rev_growth=0.10):
+    """Use yfinance EquityQuery to find small/mid-cap growth stocks."""
+    try:
+        from yfinance import EquityQuery, screen
+        q = EquityQuery("AND", [
+            EquityQuery("GT", ["lastclosemarketcap.lasttwelvemonths", min_mcap]),
+            EquityQuery("LT", ["lastclosemarketcap.lasttwelvemonths", max_mcap]),
+            EquityQuery("GT", ["quarterlyrevenuegrowth.quarterly", min_rev_growth]),
+        ])
+        result = screen(q, sortField="lastclosemarketcap.lasttwelvemonths",
+                        sortAsc=False, size=100)
+        if result and "quotes" in result:
+            return [q["symbol"] for q in result["quotes"] if "." not in q.get("symbol", ".")]
+        return []
+    except Exception:
+        return []
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def scan_yahoo_predefined(screener_key="most_actives"):
+    """Fetch tickers from Yahoo predefined screeners (most_actives, small_cap_gainers, etc.)."""
+    try:
+        result = yf.screen(yf.PREDEFINED_SCREENER_QUERIES[screener_key])
+        if result and "quotes" in result:
+            return [q["symbol"] for q in result["quotes"] if "." not in q.get("symbol", ".")]
+        return []
+    except Exception:
+        return []
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def scan_finviz():
+    """Scrape FINVIZ screener for small-cap stocks with technical setups."""
+    try:
+        url = ("https://finviz.com/screener.ashx?v=111"
+               "&f=cap_smallover,fa_salesqoq_o10,sh_avgvol_o200"
+               "&ft=4&o=-marketcap")
+        headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"}
+        resp = requests.get(url, headers=headers, timeout=10)
+        if resp.status_code != 200:
+            return []
+        # Parse ticker symbols from FINVIZ HTML table
+        import re
+        # FINVIZ table links: <a href="quote.ashx?t=TICKER"...>TICKER</a>
+        matches = re.findall(r'quote\.ashx\?t=([A-Z]{1,5})&', resp.text)
+        # Deduplicate while preserving order
+        seen = set()
+        tickers = []
+        for m in matches:
+            if m not in seen:
+                seen.add(m)
+                tickers.append(m)
+        return tickers[:100]
+    except Exception:
+        return []
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def scan_yahoo_trending():
+    """Get trending tickers from Yahoo Finance."""
+    try:
+        url = "https://query1.finance.yahoo.com/v1/finance/trending/US?count=50"
+        headers = {"User-Agent": "Mozilla/5.0"}
+        resp = requests.get(url, headers=headers, timeout=10)
+        if resp.status_code != 200:
+            return []
+        data = resp.json()
+        quotes = data.get("finance", {}).get("result", [{}])[0].get("quotes", [])
+        return [q["symbol"] for q in quotes if "." not in q.get("symbol", "")]
+    except Exception:
+        return []
+
+
+def score_scanner_candidates(tickers, spy_close, spy_daily_ret):
+    """Lightweight scoring pipeline for scanner candidates.
+    Fetches price + fundamental data and scores each ticker.
+    Returns a DataFrame with scores and key metrics.
+    """
+    if not tickers:
+        return pd.DataFrame()
+
+    # Fetch price data (technical indicators)
+    df_price = fetch_price_data(tickers)
+    if df_price.empty:
+        return pd.DataFrame()
+
+    # Fetch fundamentals (lighter — just info dict)
+    df_fund = fetch_fundamentals(tickers)
+
+    # Merge
+    df = df_price.merge(df_fund, on="Ticker", how="left")
+
+    # Calculate scores
+    scores = []
+    for _, row in df.iterrows():
+        rd = row.to_dict()
+        momentum = calc_momentum_score(rd)
+        convexity = calc_convexity_score(rd)
+        stage = calc_setup_stage(rd)
+        scores.append({
+            "Ticker": rd["Ticker"],
+            "Price": rd.get("Price"),
+            "MCap": rd.get("MarketCap"),
+            "RSI": rd.get("RSI"),
+            "Pos52": rd.get("Pos52"),
+            "vsMA50": rd.get("vsMA50"),
+            "RevGrowth": rd.get("RevenueGrowth"),
+            "ShortPct": rd.get("ShortPct"),
+            "Beta": rd.get("Beta"),
+            "AnalystUpside": rd.get("AnalystUpside"),
+            "Momentum": momentum,
+            "Convexity": convexity,
+            "SetupStage": stage,
+        })
+    df_scored = pd.DataFrame(scores)
+
+    # Down-day RS if SPY data available
+    if not spy_close.empty and not spy_daily_ret.empty:
+        df_rs = calc_downday_rs(tickers, spy_close, spy_daily_ret)
+        if not df_rs.empty:
+            df_scored = df_scored.merge(
+                df_rs[["Ticker", "RS_Score", "RS_Label"]],
+                on="Ticker", how="left"
+            )
+
+    # Composite scanner score: 40% Convexity + 30% Momentum + 30% RS
+    if "RS_Score" not in df_scored.columns:
+        df_scored["RS_Score"] = None
+        df_scored["RS_Label"] = None
+    df_scored["ScanScore"] = df_scored.apply(
+        lambda r: round(
+            0.40 * _safe(r.get("Convexity"), 0) +
+            0.30 * _safe(r.get("Momentum"), 0) +
+            0.30 * _safe(r.get("RS_Score"), 0), 1
+        ), axis=1
+    )
+    df_scored = df_scored.sort_values("ScanScore", ascending=False).reset_index(drop=True)
+    return df_scored
+
 
 # ── Scoring ──────────────────────────────────────────────────────────────────
 
@@ -568,24 +1302,20 @@ def log_scores(df):
             if t not in history:
                 history[t] = []
             # Don't duplicate today's entry
-            if history[t] and history[t][-1].get("date") == today:
-                history[t][-1] = {
+            entry = {
                     "date": today,
                     "convexity": round(float(_safe(row.get("ConvexityScore"))), 1),
                     "momentum": round(float(_safe(row.get("MomentumScore"))), 1),
                     "asymmetry": round(float(_safe(row.get("AsymmetryScore"))), 1),
-                    "stool": round(float(_safe(row.get("StoolScore"))), 1),
+                    "stool": round(float(_safe(row.get("VGScore"))), 1),
                     "price": round(float(_safe(row.get("Price"))), 2),
+                    "rs_label": str(row.get("RS_Label", "")) if row.get("RS_Label") else "",
+                    "setup_stage": str(row.get("SetupStage", "")) if row.get("SetupStage") else "",
                 }
+            if history[t] and history[t][-1].get("date") == today:
+                history[t][-1] = entry
             else:
-                history[t].append({
-                    "date": today,
-                    "convexity": round(float(_safe(row.get("ConvexityScore"))), 1),
-                    "momentum": round(float(_safe(row.get("MomentumScore"))), 1),
-                    "asymmetry": round(float(_safe(row.get("AsymmetryScore"))), 1),
-                    "stool": round(float(_safe(row.get("StoolScore"))), 1),
-                    "price": round(float(_safe(row.get("Price"))), 2),
-                })
+                history[t].append(entry)
             # Keep last 90 days max
             history[t] = history[t][-90:]
         with open(SCORES_FILE, "w") as f:
@@ -617,12 +1347,12 @@ def calc_momentum_score(row):
 def calc_asymmetry_score(row, weights=None):
     if weights is None:
         weights = {}
-    w_upside    = weights.get("Analyst Upside", 30)
-    w_beta      = weights.get("Beta", 20)
-    w_atr       = weights.get("Volatility (ATR%)", 15)
-    w_short     = weights.get("Short Interest", 15)
-    w_rsi       = weights.get("RSI Positioning", 10)
-    w_consensus = weights.get("Analyst Consensus", 10)
+    w_upside    = weights.get("Analyst Upside", 15)
+    w_beta      = weights.get("Beta", 25)
+    w_atr       = weights.get("Volatility (ATR%)", 20)
+    w_short     = weights.get("Short Interest", 20)
+    w_rsi       = weights.get("RSI Positioning", 15)
+    w_consensus = weights.get("Analyst Consensus", 5)
     components = {}
     upside = _safe(row.get("AnalystUpside"))
     # Scale analyst upside confidence by number of analysts covering the stock.
@@ -654,9 +1384,9 @@ def calc_asymmetry_score(row, weights=None):
     components["Analyst Consensus"] = rec_map.get(rec, 0.5) * w_consensus
     return round(sum(components.values()), 1), components
 
-def calc_three_legged_stool(row):
+def calc_value_growth_score(row):
     """
-    Score 0-100. Implements the Three-Legged Stool:
+    Score 0-100. Implements the Value-Growth Score (three-legged stool framework):
       Leg 1 — Undervalued (low P/S vs own history)   40 pts
       Leg 2 — Revenue acceleration (growth + Rule of 40) 35 pts
       Leg 3 — Sector/price momentum                  25 pts
@@ -684,9 +1414,9 @@ def calc_three_legged_stool(row):
     return round(sum(components.values()), 1), components
 
 def calc_convexity_score(row, weights=None):
-    """Combined convexity = 50% asymmetry + 50% three-legged stool."""
+    """Combined convexity = 50% asymmetry + 50% value-growth."""
     asym, _ = calc_asymmetry_score(row, weights=weights)
-    stool, _ = calc_three_legged_stool(row)
+    stool, _ = calc_value_growth_score(row)
     return round((asym + stool) / 2, 1)
 
 def calc_setup_stage(row):
@@ -713,7 +1443,7 @@ def calc_setup_stage(row):
     return "Neutral"
 
 
-def calc_four_pillars(row, themes, spy_ret=None, etf_data=None):
+def calc_four_pillars(row, themes, spy_ret=None, etf_data=None, st_data=None):
     """Score each of the 4 swing-trading pillars 0-100 and return alignment."""
     # ── Technical (0-100) ──
     tech = 0.0
@@ -746,27 +1476,22 @@ def calc_four_pillars(row, themes, spy_ret=None, etf_data=None):
     rev_g = _safe(row.get("RevGrowthPct"), 0)
     if rev_g > 0:
         fund += min(rev_g / 60, 1.0) * 30
-    # Analyst upside > 0: up to 25 pts, scaled by analyst count confidence
+    # Analyst upside > 0: up to 15 pts (reduced — analysts often wrong on growth stocks)
     upside = _safe(row.get("AnalystUpside"), 0)
     num_analysts = int(_safe(row.get("NumAnalysts"), 0))
     analyst_conf = 0.0 if num_analysts == 0 else min(1.0, 0.4 + 0.2 * num_analysts)
-    # 0 analysts → 0.0 (no signal), 1 → 0.6, 2 → 0.8, 3+ → 1.0
     if upside > 0:
-        fund += min(upside / 100, 1.0) * 25 * analyst_conf
-    # FCF positive: 20 pts
+        fund += min(upside / 100, 1.0) * 15 * analyst_conf
+    # FCF positive: 25 pts (hard data, not opinion)
     if row.get("FCFPositive"):
-        fund += 20
-    # Rule of 40 > 40: up to 15 pts
+        fund += 25
+    # Rule of 40 > 40: up to 20 pts (hard data)
     rule40 = _safe(row.get("Rule40"), 0)
     if rule40 > 40:
-        fund += min((rule40 - 40) / 40, 1.0) * 15
+        fund += min((rule40 - 40) / 40, 1.0) * 20
     elif rule40 > 20:
-        fund += (rule40 - 20) / 20 * 7.5
-    # Insider buying: 10 pts (use InsiderSignal if available, else InsiderNet)
-    insider_sig = str(row.get("InsiderSignal", "")).lower()
-    insider_net = _safe(row.get("InsiderNet"), 0)
-    if insider_sig == "buying" or insider_net > 0:
-        fund += 10
+        fund += (rule40 - 20) / 20 * 10
+    # (Insider buying moved to Narrative pillar — it's a catalyst signal, not fundamental)
 
     # ── Thematic (0-100) ──
     thematic = 0.0
@@ -808,35 +1533,110 @@ def calc_four_pillars(row, themes, spy_ret=None, etf_data=None):
         thematic += 15
 
     # ── Narrative (0-100) ──
+    # Captures the STORY: sentiment, attention, insider conviction, theme heat,
+    # catalyst proximity, and track record. Distinct from Technical/Fundamental/Thematic.
+    # Designed so a stock with no exceptional signals still scores ~40-50 (neutral narrative).
     narr = 0.0
-    # Analyst consensus buy/strong_buy: 30 pts
-    rec = str(row.get("Recommendation", "")).lower().replace(" ", "_")
-    if rec in ("strong_buy", "buy"):
-        narr += 30
-    elif rec == "hold":
+    ticker = row.get("Ticker", "")
+
+    # Baseline: 15 pts — you picked this stock for a reason, it has a thesis
+    narr += 15
+
+    # Social sentiment (StockTwits): up to 15 pts
+    _st_sentiment = (st_data or {}).get(ticker, {})
+    bull_pct = _st_sentiment.get("bull_pct")
+    msg_count = _st_sentiment.get("msg_count", 0)
+    if bull_pct is not None:
+        if bull_pct >= 60:
+            narr += 8 + min((bull_pct - 60) / 30, 1.0) * 7
+        elif bull_pct < 40:
+            narr += 5  # contrarian — extreme bearishness can mean opportunity
+        else:
+            narr += 7  # neutral sentiment, not a red flag
+        if msg_count >= 10:
+            narr += min(msg_count / 25, 1.0) * 3
+    else:
+        narr += 7  # no data = neutral, not penalized
+
+    # Insider buying: 12 pts — strongest conviction signal
+    insider_sig = str(row.get("InsiderSignal", "")).lower()
+    insider_net = _safe(row.get("InsiderNet"), 0)
+    if insider_sig == "buying" or insider_net > 0:
+        narr += 12
+    else:
+        narr += 3  # absence of insider buying isn't bearish — most stocks don't have it
+
+    # Insider ownership: up to 10 pts — skin in the game
+    # Most small-caps have some insider ownership, scale generously
+    insider_pct = _safe(row.get("InsiderPct"), 0)
+    if insider_pct > 10:
         narr += 10
-    # Short interest > 10% (squeeze potential): up to 20 pts
-    short_pct = _safe(row.get("ShortPct"), 0)
-    if short_pct > 10:
-        narr += min((short_pct - 10) / 20, 1.0) * 20
-    elif short_pct > 5:
-        narr += (short_pct - 5) / 5 * 10
-    # Volume spike (RelVol > 1.5): 20 pts
-    rel_vol = _safe(row.get("RelVol"), 1.0)
-    if rel_vol > 1.5:
-        narr += min((rel_vol - 1.5) / 1.5, 1.0) * 20
-    # Earnings coming within 30 days: 15 pts
+    elif insider_pct > 0:
+        narr += max(3, min(insider_pct / 10 * 8, 10))
+    else:
+        narr += 2
+
+    # Earnings beat track record: up to 10 pts
+    beats = row.get("EarningsBeats")
+    if beats is not None:
+        try:
+            beat_val = int(beats) if not isinstance(beats, str) else int(beats.split("/")[0])
+            narr += min(beat_val / 3, 1.0) * 10  # 3 beats = full marks (was 4)
+        except (ValueError, IndexError):
+            narr += 5  # have data but can't parse
+    else:
+        narr += 5  # no data = neutral
+
+    # Theme momentum: up to 15 pts — is the theme hot right now?
+    ticker_themes = get_ticker_themes(themes, ticker)
+    if ticker_themes and etf_data is not None and not etf_data.empty:
+        theme_etf_rets = []
+        for th_name in ticker_themes:
+            th_entry = themes.get(th_name, {})
+            for etf_t in th_entry.get("etfs", []):
+                etf_row = etf_data[etf_data["Ticker"] == etf_t]
+                if not etf_row.empty:
+                    r1m = etf_row.iloc[0].get("Ret1m")
+                    if r1m is not None:
+                        theme_etf_rets.append(r1m)
+        if theme_etf_rets:
+            avg_theme_ret = np.mean(theme_etf_rets)
+            if avg_theme_ret > 5:
+                narr += 15
+            elif avg_theme_ret > 0:
+                narr += 8 + min(avg_theme_ret / 5, 1.0) * 7
+            elif avg_theme_ret > -5:
+                narr += 6  # flat theme, not a penalty
+            else:
+                narr += 3  # theme is cold
+        else:
+            narr += 7  # no ETF data, neutral
+    else:
+        narr += 7  # untagged, neutral
+
+    # Analyst coverage breadth: up to 10 pts
+    num_analysts = int(_safe(row.get("NumAnalysts"), 0))
+    if num_analysts >= 5:
+        narr += 10
+    elif num_analysts >= 3:
+        narr += 8
+    elif num_analysts >= 1:
+        narr += 6
+    else:
+        narr += 4  # uncovered — could be undiscovered, not penalized heavily
+
+    # Earnings catalyst proximity: up to 5 pts (bonus)
     next_earn = row.get("NextEarnings")
     if next_earn and str(next_earn) != "N/A":
         try:
             earn_dt = pd.to_datetime(next_earn)
             days_to = (earn_dt - pd.Timestamp.now()).days
-            if 0 <= days_to <= 30:
-                narr += 15
+            if 0 <= days_to <= 14:
+                narr += 5
+            elif 0 <= days_to <= 30:
+                narr += 3
         except Exception:
             pass
-    # Skip headlines for now (not available in df_all)
-    # narr += 15 if headlines exist
 
     tech = min(round(tech, 1), 100)
     fund = min(round(fund, 1), 100)
@@ -921,7 +1721,7 @@ Be direct. No filler. Base everything on the data provided."""
 
 with st.sidebar:
     st.title("Portfolio")
-    st.divider()
+    grad_divider()
 
     # ── Watchlist selector ──
     wl_names = list(st.session_state.watchlists.keys())
@@ -942,7 +1742,7 @@ with st.sidebar:
         st.caption(f"{len(st.session_state.tickers)} tickers")
     st.caption(f"Cache TTL — Price: 5 min | Fund: 30 min | Sentiment: 15 min")
     st.caption(f"Last load: {datetime.now().strftime('%H:%M:%S')}")
-    st.divider()
+    grad_divider()
 
     # ── Watchlist management ──
     with st.expander("Manage Watchlists"):
@@ -957,7 +1757,7 @@ with st.sidebar:
                 st.cache_data.clear()
                 st.rerun()
 
-        st.divider()
+        grad_divider()
 
         # Import Yahoo Finance CSV
         st.markdown("**Import from Yahoo Finance**")
@@ -979,7 +1779,7 @@ with st.sidebar:
             else:
                 st.error("No tickers found in CSV. Expected a 'Symbol' column.")
 
-        st.divider()
+        grad_divider()
 
         # Rename watchlist
         rename_val = st.text_input("Rename current watchlist", value=st.session_state.active_watchlist, key="rename_wl")
@@ -992,7 +1792,7 @@ with st.sidebar:
                 save_watchlists(st.session_state.watchlists)
                 st.rerun()
 
-        st.divider()
+        grad_divider()
 
         # Duplicate watchlist
         dup_name = st.text_input("Duplicate as", placeholder="e.g. Watchlist Copy", key="dup_wl")
@@ -1011,7 +1811,7 @@ with st.sidebar:
                     save_watchlists(st.session_state.watchlists)
                     st.rerun()
 
-    st.divider()
+    grad_divider()
 
     # ── Ticker management (within active watchlist) ──
     st.subheader("Manage Tickers")
@@ -1033,32 +1833,32 @@ with st.sidebar:
             save_watchlists(st.session_state.watchlists)
             st.cache_data.clear()
             st.rerun()
-    st.divider()
+    grad_divider()
     selected = st.multiselect("Filter view", st.session_state.tickers,
                                default=st.session_state.tickers)
-    st.divider()
+    grad_divider()
     st.subheader("AI Summary")
     claude_key_input = st.text_input("Anthropic API key", type="password",
                                       placeholder="sk-ant-...",
                                       help="Get one at console.anthropic.com")
     if claude_key_input:
         st.session_state["claude_key"] = claude_key_input
-    st.caption("Used only in AI Summary tab. ~$0.001 per ticker.")
-    st.divider()
+    st.caption("Used in Signals tab AI Summary section. ~$0.001 per ticker.")
+    grad_divider()
     # Single-ticker deep-dive selector
     st.subheader("Ticker Deep Dive")
     deep_dive_ticker = st.selectbox("Select ticker", ["--"] + sorted(st.session_state.tickers), key="deep_dive")
-    st.divider()
+    grad_divider()
 
     # Score weight sliders
     with st.expander("Score Weights"):
         st.caption("Adjust asymmetry score component weights. Total does not need to equal 100.")
-        w_upside = st.slider("Analyst Upside", 0, 50, 30, key="w_upside")
-        w_beta = st.slider("Beta", 0, 30, 20, key="w_beta")
-        w_atr = st.slider("Volatility (ATR%)", 0, 30, 15, key="w_atr")
-        w_short = st.slider("Short Interest", 0, 30, 15, key="w_short")
-        w_rsi = st.slider("RSI Positioning", 0, 20, 10, key="w_rsi")
-        w_consensus = st.slider("Analyst Consensus", 0, 20, 10, key="w_consensus")
+        w_upside = st.slider("Analyst Upside", 0, 30, 15, key="w_upside")
+        w_beta = st.slider("Beta", 0, 40, 25, key="w_beta")
+        w_atr = st.slider("Volatility (ATR%)", 0, 40, 20, key="w_atr")
+        w_short = st.slider("Short Interest", 0, 40, 20, key="w_short")
+        w_rsi = st.slider("RSI Positioning", 0, 30, 15, key="w_rsi")
+        w_consensus = st.slider("Analyst Consensus", 0, 15, 5, key="w_consensus")
     st.session_state["asym_weights"] = {
         "Analyst Upside": w_upside,
         "Beta": w_beta,
@@ -1068,7 +1868,7 @@ with st.sidebar:
         "Analyst Consensus": w_consensus,
     }
 
-    st.divider()
+    grad_divider()
 
     # Ideas & Roadmap (moved from tab)
     with st.expander("Ideas & Roadmap"):
@@ -1086,6 +1886,14 @@ with st.sidebar:
 | ~~Earnings calendar view~~ | DONE |
 | Volume spike detector | Planned |
 | ~~Export to CSV~~ | DONE |
+        """)
+        st.markdown("**Performance review**")
+        st.markdown("""
+| Area | Notes |
+|---|---|
+| StockTwits fetch | Now in main data load for Narrative pillar — adds ~10-15s. Review: batch API, async, or move to background refresh |
+| Sector ETF fetch | 11 individual downloads for Market Conditions. Consider bulk download or pre-market cron |
+| Scanner scoring | Caps at 80 tickers but still heavy. Consider caching scored results |
         """)
         st.markdown("**Needs API / data source**")
         st.markdown("""
@@ -1110,7 +1918,7 @@ with st.sidebar:
 | EDGAR MCP | SEC filings, 8-K catalyst alerts |
         """)
 
-    st.divider()
+    grad_divider()
     st.caption(f"Updated: {datetime.now().strftime('%H:%M:%S')}")
 
 # ── Load all data once ───────────────────────────────────────────────────────
@@ -1126,6 +1934,16 @@ with st.spinner("Loading fundamentals & valuation..."):
     df_fund = fetch_fundamentals(st.session_state.tickers)
 
 spy_ret = fetch_spy_returns()
+spy_close, spy_daily_ret = fetch_spy_daily()
+
+# Market environment data
+with st.spinner("Scanning market environment..."):
+    market_env = fetch_market_environment()
+    env_total, env_pillars, env_decision, env_decision_sub = calc_market_env_score(market_env)
+
+# Relative strength (down-day analysis)
+with st.spinner("Calculating relative strength..."):
+    df_rs = calc_downday_rs(tuple(st.session_state.tickers), spy_close, spy_daily_ret)
 
 # Fetch ETF benchmark data for all themes
 _all_etf_tickers = get_all_etf_tickers(st.session_state.themes)
@@ -1139,18 +1957,50 @@ _asym_weights = st.session_state.get("asym_weights")
 df_all["ConvexityScore"] = df_all.apply(lambda r: calc_convexity_score(r, weights=_asym_weights), axis=1)
 df_all["MomentumScore"]  = df_all.apply(calc_momentum_score, axis=1)
 df_all["AsymmetryScore"]  = df_all.apply(lambda r: calc_asymmetry_score(r, weights=_asym_weights)[0], axis=1)
-df_all["StoolScore"]      = df_all.apply(lambda r: calc_three_legged_stool(r)[0], axis=1)
+df_all["VGScore"]      = df_all.apply(lambda r: calc_value_growth_score(r)[0], axis=1)
+
+# Fetch insider & news data early so it's available for Narrative pillar + Dashboard alerts
+with st.spinner("Loading news & insider data..."):
+    df_extras = fetch_extras(tuple(st.session_state.tickers))
+df_all = df_all.merge(
+    df_extras[["Ticker", "InsiderSignal", "InsiderNet", "InsiderBuys", "EarningsBeats"]],
+    on="Ticker", how="left"
+)
+
+# StockTwits sentiment (moved here so Narrative pillar can use it)
+with st.spinner("Loading sentiment..."):
+    st_data = fetch_stocktwits(tuple(st.session_state.tickers))
+# Merge sentiment into df_all
+df_all["ST_BullPct"] = df_all["Ticker"].map(lambda t: st_data.get(t, {}).get("bull_pct"))
+df_all["ST_MsgCount"] = df_all["Ticker"].map(lambda t: st_data.get(t, {}).get("msg_count", 0))
+
+# Merge relative strength data
+if not df_rs.empty:
+    df_all = df_all.merge(
+        df_rs[["Ticker", "RS_Score", "RS_Rank", "RS_Label", "DownDayRS",
+               "DownDayWinRate", "RecentDDExcess", "EarlyBottom", "DaysSinceLow",
+               "RS_1m", "RS_3m"]],
+        on="Ticker", how="left"
+    )
+else:
+    for col in ["RS_Score", "RS_Rank", "RS_Label", "DownDayRS",
+                "DownDayWinRate", "RecentDDExcess", "EarlyBottom", "DaysSinceLow",
+                "RS_1m", "RS_3m"]:
+        df_all[col] = None
 
 # Setup Stage and Four-Pillar scores
 df_all["SetupStage"] = df_all.apply(calc_setup_stage, axis=1)
 _pillar_results = df_all.apply(
-    lambda r: calc_four_pillars(r, st.session_state.themes, spy_ret, df_etf), axis=1
+    lambda r: calc_four_pillars(r, st.session_state.themes, spy_ret, df_etf, st_data), axis=1
 )
 df_all["PillarTech"]    = _pillar_results.apply(lambda d: d["technical"])
 df_all["PillarFund"]    = _pillar_results.apply(lambda d: d["fundamental"])
 df_all["PillarTheme"]   = _pillar_results.apply(lambda d: d["thematic"])
 df_all["PillarNarr"]    = _pillar_results.apply(lambda d: d["narrative"])
 df_all["PillarAligned"] = _pillar_results.apply(lambda d: d["aligned"])
+
+# Execution window from portfolio RS data
+exec_window = calc_execution_window(df_all)
 
 # Log scores for history tracking
 log_scores(df_all)
@@ -1161,9 +2011,61 @@ _failed  = [t for t in st.session_state.tickers if t not in _fetched]
 if _failed:
     st.warning(f"Failed to fetch data for: **{', '.join(_failed)}**. These tickers are excluded from analysis.")
 
-st.title("Portfolio Analysis")
+st.title("◣ Convexity Terminal")
 _data_ts = datetime.now().strftime('%Y-%m-%d %H:%M')
 st.caption(f"As of {_data_ts}  |  **{st.session_state.active_watchlist}**  |  {len(df_price)} tickers")
+
+# ── Watchlist Health Score ────────────────────────────────────────────────
+n_total = len(df_all)
+if n_total > 0:
+    pct_rs_leader = (df_all["RS_Label"] == "Leader").sum() / n_total * 100 if "RS_Label" in df_all.columns else 0
+    pct_trending = df_all["SetupStage"].isin(["Trending", "Emerging"]).sum() / n_total * 100
+    pct_aligned = (df_all["PillarAligned"] == True).sum() / n_total * 100
+    health_avg = (pct_rs_leader + pct_trending + pct_aligned) / 3
+    if health_avg >= 40:
+        health_label = "Strong environment -- lean in"
+        health_color = "green"
+    elif health_avg >= 20:
+        health_label = "Selective -- be patient"
+        health_color = "orange"
+    else:
+        health_label = "Weak tape -- preserve capital"
+        health_color = "red"
+
+    # Color for KPI values based on health
+    def _kpi_color(pct):
+        if pct >= 40: return "#2ecc71"
+        if pct >= 20: return "#f39c12"
+        return "#e74c3c"
+
+    _health_colors = {"green": "#2ecc71", "orange": "#f39c12", "red": "#e74c3c"}
+    _hc = _health_colors.get(health_color, "#e6edf3")
+
+    st.markdown(
+        f"""<div style="display:flex;gap:12px;margin:4px 0 8px 0;">
+        <div class="kpi-card" style="flex:1;">
+            <div class="kpi-label">RS Leaders</div>
+            <div class="kpi-value" style="color:{_kpi_color(pct_rs_leader)};">{pct_rs_leader:.0f}%</div>
+            <div class="kpi-sub">{int((df_all["RS_Label"] == "Leader").sum()) if "RS_Label" in df_all.columns else 0} of {n_total}</div>
+        </div>
+        <div class="kpi-card" style="flex:1;">
+            <div class="kpi-label">Trending / Emerging</div>
+            <div class="kpi-value" style="color:{_kpi_color(pct_trending)};">{pct_trending:.0f}%</div>
+            <div class="kpi-sub">{int(df_all["SetupStage"].isin(["Trending", "Emerging"]).sum())} of {n_total}</div>
+        </div>
+        <div class="kpi-card" style="flex:1;">
+            <div class="kpi-label">Four-Pillar Aligned</div>
+            <div class="kpi-value" style="color:{_kpi_color(pct_aligned)};">{pct_aligned:.0f}%</div>
+            <div class="kpi-sub">{int((df_all["PillarAligned"] == True).sum())} of {n_total}</div>
+        </div>
+        <div class="kpi-card" style="flex:1.3;">
+            <div class="kpi-label">Market Read</div>
+            <div class="kpi-value" style="color:{_hc};font-size:1.1rem;">{health_label}</div>
+            <div class="kpi-sub">Health score: {health_avg:.0f}</div>
+        </div>
+        </div>""",
+        unsafe_allow_html=True,
+    )
 
 # ── Single-Ticker Deep Dive (above tabs) ─────────────────────────────────────
 
@@ -1191,12 +2093,14 @@ if deep_dive_ticker != "--" and deep_dive_ticker in df_all["Ticker"].values:
     dd9.metric("Analyst Upside", f"{_safe(t_row.get('AnalystUpside')):+.0f}%" if _safe(t_row.get('AnalystUpside')) else "N/A")
     dd10.metric("Rev Growth", f"{_safe(t_row.get('RevGrowthPct')):+.0f}%" if _safe(t_row.get('RevGrowthPct')) else "N/A")
 
-    dd11, dd12, dd13, dd14, dd15 = st.columns(5)
+    dd11, dd12, dd13, dd14, dd15, dd16 = st.columns(6)
     dd11.metric("ATR%", f"{t_row['ATR_pct']:.1f}%")
     dd12.metric("Short %", f"{_safe(t_row.get('ShortPct')):.1f}%" if _safe(t_row.get('ShortPct')) else "N/A")
     dd13.metric("FCF+", "Yes" if t_row.get("FCFPositive") else "No")
     dd14.metric("Rule of 40", f"{_safe(t_row.get('Rule40')):.0f}" if _safe(t_row.get('Rule40')) else "N/A")
     dd15.metric("Next Earnings", t_row.get("NextEarnings") or "N/A")
+    _dd_bull = t_row.get("ST_BullPct")
+    dd16.metric("Sentiment", f"{_dd_bull:.0f}% bull" if pd.notna(_dd_bull) and _dd_bull else "N/A")
 
     # Relative strength
     if spy_ret:
@@ -1207,7 +2111,7 @@ if deep_dive_ticker != "--" and deep_dive_ticker in df_all["Ticker"].values:
 
     # Score breakdown
     _, asym_comps = calc_asymmetry_score(t_row, weights=_asym_weights)
-    _, stool_comps = calc_three_legged_stool(t_row)
+    _, stool_comps = calc_value_growth_score(t_row)
     with st.expander("Score Breakdown"):
         bc1, bc2 = st.columns(2)
         with bc1:
@@ -1215,7 +2119,7 @@ if deep_dive_ticker != "--" and deep_dive_ticker in df_all["Ticker"].values:
             for k, v in asym_comps.items():
                 st.markdown(f"- {k}: **{v:.1f}** pts")
         with bc2:
-            st.markdown("**Three-Legged Stool**")
+            st.markdown("**Value-Growth Score**")
             for k, v in stool_comps.items():
                 st.markdown(f"- {k}: **{v:.1f}** pts")
 
@@ -1276,17 +2180,263 @@ if deep_dive_ticker != "--" and deep_dive_ticker in df_all["Ticker"].values:
             )
             st.plotly_chart(fig_sh, use_container_width=True)
 
-    st.divider()
+    grad_divider()
 
-tab_dash, tab_conv, tab_themes, tab_charts, tab_sig, tab_ai = st.tabs([
-    "Dashboard", "Convexity", "Themes", "Charts", "Signals", "AI Summary",
+# ── TABS (visible at top, right after KPI row) ──────────────────────────────
+tab_dash, tab_conv, tab_themes, tab_charts, tab_sig, tab_scan = st.tabs([
+    "Dashboard", "Convexity", "Themes", "Charts", "Signals", "Scanner",
 ])
 
-# ── TAB: Dashboard ───────────────────────────────────────────────────────────
+# Stage color map (used across multiple tabs)
+_stage_colors = {
+    "Basing": "#3498db", "Emerging": "#2ecc71", "Trending": "#27ae60",
+    "Extended": "#e67e22", "Breaking Down": "#e74c3c", "Neutral": "#888",
+}
+def _color_stage(val):
+    return f"color: {_stage_colors.get(val, '#888')}"
+def _color_aligned(val):
+    if val:
+        return "background-color: #1a3a2a; color: #2ecc71"
+    return "background-color: #5b2c2c; color: #ff6b6b"
 
 with tab_dash:
-    # ── a) Four-Pillar Alignment ─────────────────────────────────────────────
-    st.subheader("Four-Pillar Alignment")
+    # ══════════════════════════════════════════════════════════════════════════
+    # MARKET ENVIRONMENT — "Should I Be Trading?"
+    # ══════════════════════════════════════════════════════════════════════════
+    section_header("Market Conditions", "#58a6ff")
+
+    # Decision badge + total score
+    _env_colors = {"OPPORTUNITY": "#2ecc71", "SELECTIVE": "#f39c12", "DEFENSIVE": "#e74c3c"}
+    _env_bg = {"OPPORTUNITY": "#0d2818", "SELECTIVE": "#2d2a0d", "DEFENSIVE": "#2d0d0d"}
+    _dec_color = _env_colors.get(env_decision, "#e6edf3")
+    _dec_bg = _env_bg.get(env_decision, "#161b22")
+
+    # Build a single row of 7 cards: Decision, Score, then each pillar
+    def _env_card(label, value, subtitle, color="#e6edf3", bg="#161b22", border="#30363d"):
+        return (
+            f'<div style="background:{bg};border:1px solid {border};border-radius:8px;'
+            f'padding:10px 12px;text-align:center;flex:1;min-width:0;">'
+            f'<div style="font-family:\'Inter\',sans-serif;font-size:0.68rem;color:#8b949e;'
+            f'text-transform:uppercase;letter-spacing:0.5px;">{label}</div>'
+            f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:1.3rem;'
+            f'font-weight:700;color:{color};line-height:1.3;">{value}</div>'
+            f'<div style="font-family:\'Inter\',sans-serif;font-size:0.6rem;color:#6e7681;">'
+            f'{subtitle}</div></div>'
+        )
+
+    def _pillar_color(score):
+        if score >= 60: return "#2ecc71"
+        if score >= 40: return "#f39c12"
+        return "#e74c3c"
+
+    _env_cards_html = '<div style="display:flex;gap:8px;margin:6px 0 10px 0;">'
+    # Decision card
+    _env_cards_html += _env_card("Market Posture", env_decision, env_decision_sub,
+                                  color=_dec_color, bg=_dec_bg, border=_dec_color)
+    # Score card
+    _env_cards_html += _env_card("Score", str(env_total), "/ 100", color=_dec_color)
+    # Pillar cards
+    for pname, pdata in env_pillars.items():
+        _ps = pdata["score"]
+        _pw = pdata["weight"]
+        _pc = _pillar_color(_ps)
+        _env_cards_html += _env_card(pname, str(_ps), f"wt: {_pw}%", color=_pc)
+    _env_cards_html += '</div>'
+    st.markdown(_env_cards_html, unsafe_allow_html=True)
+
+    # Expandable detail panels
+    with st.expander("Environment Detail"):
+        det_c1, det_c2, det_c3 = st.columns(3)
+
+        with det_c1:
+            st.markdown("**Volatility**")
+            vix_trend = "Rising" if market_env.get("vix_rising") else "Falling"
+            vix_trend_color = "red" if market_env.get("vix_rising") else "green"
+            st.markdown(f"- VIX: **{market_env.get('vix_level', 'N/A')}** "
+                        f"(vs 20d MA: {market_env.get('vix_ma20', 'N/A')})")
+            st.markdown(f"- VIX Trend: **:{vix_trend_color}[{vix_trend}]**")
+            st.markdown(f"- VIX 1Y Percentile: **{market_env.get('vix_pct_rank', 'N/A'):.0f}th**")
+
+            st.markdown("**Trend**")
+            def _trend_label(val):
+                if val is None: return "N/A", "gray"
+                return (f"{val:+.1f}%", "green" if val > 0 else "red")
+            for label, key in [("SPX vs 20d", "spx_vs_20d"), ("SPX vs 50d", "spx_vs_50d"), ("SPX vs 200d", "spx_vs_200d")]:
+                v, c = _trend_label(market_env.get(key))
+                st.markdown(f"- {label}: **:{c}[{v}]**")
+            qqq_v, qqq_c = _trend_label(market_env.get("qqq_vs_50d"))
+            st.markdown(f"- QQQ vs 50d: **:{qqq_c}[{qqq_v}]**")
+
+        with det_c2:
+            st.markdown("**Breadth**")
+            st.markdown(f"- Sectors > 50d MA: **{market_env.get('sectors_above_50d', '?')}** / 11")
+            st.markdown(f"- Sectors positive today: **{market_env.get('sectors_positive_1d', '?')}** / 11")
+            if market_env.get("sector_leader"):
+                st.markdown(f"- Leader (5d): **{market_env.get('sector_leader')}**")
+            if market_env.get("sector_laggard"):
+                st.markdown(f"- Laggard (5d): **{market_env.get('sector_laggard')}**")
+
+            st.markdown("**Macro**")
+            tnx_trend = "Rising" if market_env.get("tnx_rising") else "Falling"
+            tnx_color = "red" if market_env.get("tnx_rising") else "green"
+            st.markdown(f"- 10Y Yield: **{market_env.get('tnx_yield', 'N/A')}%** "
+                        f"(:**{tnx_color}[{tnx_trend}]**)")
+            dxy_trend = "Strengthening" if market_env.get("dxy_strengthening") else "Weakening"
+            dxy_color = "red" if market_env.get("dxy_strengthening") else "green"
+            st.markdown(f"- DXY: **{market_env.get('dxy_level', 'N/A')}** "
+                        f"(:**{dxy_color}[{dxy_trend}]**)")
+
+        with det_c3:
+            # Sector performance mini-table
+            st.markdown("**Sector Performance (5d)**")
+            sectors = market_env.get("sectors", {})
+            if sectors:
+                sorted_sectors = sorted(sectors.items(), key=lambda x: x[1]["ret_5d"], reverse=True)
+                for etf, data in sorted_sectors:
+                    r5 = data["ret_5d"]
+                    sc = "green" if r5 > 0 else "red"
+                    st.markdown(f"- {etf}: **:{sc}[{r5:+.1f}%]**")
+
+    st.caption(
+        "**65+** = OPPORTUNITY (lean in) · **45-64** = SELECTIVE (quality setups only) · "
+        "**<45** = DEFENSIVE (preserve capital)"
+    )
+    grad_divider()
+
+    # ── Active Alerts ─────────────────────────────────────────────────────────
+    section_header("Alerts", "#f39c12")
+    overbought = df_price[df_price["RSI"] >= 70]["Ticker"].tolist()
+    oversold   = df_price[df_price["RSI"] <= 30]["Ticker"].tolist()
+    breakouts  = df_price[df_price["Breakout"] == True]["Ticker"].tolist()
+    vol_spikes = df_price[df_price["RelVol"] >= 2.0]["Ticker"].tolist()
+
+    _has_alerts = False
+    if oversold:
+        alert_card(f"<strong>Oversold</strong> (RSI &le; 30): {', '.join(oversold)} &mdash; potential entry", "green")
+        _has_alerts = True
+    if overbought:
+        alert_card(f"<strong>Overbought</strong> (RSI &ge; 70): {', '.join(overbought)} &mdash; consider trimming", "red")
+        _has_alerts = True
+    if breakouts:
+        alert_card(f"<strong>52wk Breakout</strong> (&ge; 95%): {', '.join(breakouts)} &mdash; momentum confirmation", "blue")
+        _has_alerts = True
+    if vol_spikes:
+        alert_card(f"<strong>Volume Spike</strong> (&ge; 2x avg): {', '.join(vol_spikes)} &mdash; unusual activity", "amber")
+        _has_alerts = True
+    insider_buyers = df_all[df_all["InsiderSignal"] == "Buying"]["Ticker"].tolist()
+    if insider_buyers:
+        alert_card(f"<strong>Insider Buying</strong> (last 90 days): {', '.join(insider_buyers)}", "green")
+        _has_alerts = True
+    rs_leaders = df_all[df_all["RS_Label"] == "Leader"]["Ticker"].tolist() if "RS_Label" in df_all.columns else []
+    early_bots = df_all[df_all["EarlyBottom"] == True]["Ticker"].tolist() if "EarlyBottom" in df_all.columns else []
+    if rs_leaders:
+        alert_card(f"<strong>RS Leaders</strong> (strongest on down-days): {', '.join(rs_leaders)}", "green")
+        _has_alerts = True
+    if early_bots:
+        eb_not_leaders = [t for t in early_bots if t not in rs_leaders]
+        if eb_not_leaders:
+            alert_card(f"<strong>Early Bottoming</strong> (low before SPY): {', '.join(eb_not_leaders)}", "blue")
+            _has_alerts = True
+
+    # Character Change Detection
+    _score_history = load_score_history()
+    if _score_history:
+        for _, row in df_all.iterrows():
+            t = row["Ticker"]
+            hist = _score_history.get(t, [])
+            if len(hist) < 2:
+                continue
+            current_rs = str(row.get("RS_Label", ""))
+            current_stage = str(row.get("SetupStage", ""))
+            past_entries = [h for h in hist[:-1] if h.get("rs_label")][-5:]
+            past_stage_entries = [h for h in hist[:-1] if h.get("setup_stage")][-5:]
+            if current_rs in ("Holding", "Lagging") and past_entries:
+                prev_rs_labels = [h["rs_label"] for h in past_entries]
+                if "Leader" in prev_rs_labels:
+                    alert_card(f"<strong>RS Downgrade</strong> {t}: was Leader, now {current_rs}", "red")
+                    _has_alerts = True
+            if current_stage in ("Basing", "Breaking Down") and past_stage_entries:
+                prev_stages = [h["setup_stage"] for h in past_stage_entries]
+                if "Trending" in prev_stages:
+                    alert_card(f"<strong>Stage Degradation</strong> {t}: was Trending, now {current_stage}", "amber")
+                    _has_alerts = True
+
+    # Upcoming earnings within 7 days as alert
+    _earn_check = df_all[df_all["NextEarnings"].notna() & (df_all["NextEarnings"] != "")].copy()
+    if not _earn_check.empty:
+        _earn_check["_ed"] = pd.to_datetime(_earn_check["NextEarnings"], errors="coerce")
+        _today_dt = pd.Timestamp.now().normalize()
+        _earn_soon = _earn_check[(_earn_check["_ed"] >= _today_dt) & (_earn_check["_ed"] <= _today_dt + pd.Timedelta(days=7))]
+        if not _earn_soon.empty:
+            _earn_tickers = [f"{r['Ticker']} ({r['NextEarnings']})" for _, r in _earn_soon.iterrows()]
+            alert_card(f"<strong>Earnings This Week</strong>: {', '.join(_earn_tickers)}", "amber")
+            _has_alerts = True
+
+    # Extreme sentiment alerts
+    if "ST_BullPct" in df_all.columns:
+        _very_bullish = df_all[df_all["ST_BullPct"].notna() & (df_all["ST_BullPct"] >= 80)]["Ticker"].tolist()
+        _very_bearish = df_all[df_all["ST_BullPct"].notna() & (df_all["ST_BullPct"] <= 25)]["Ticker"].tolist()
+        if _very_bullish:
+            alert_card(f"<strong>Extreme Bullish Sentiment</strong> (&ge;80% bull): {', '.join(_very_bullish)} &mdash; crowded trade risk", "amber")
+            _has_alerts = True
+        if _very_bearish:
+            alert_card(f"<strong>Extreme Bearish Sentiment</strong> (&le;25% bull): {', '.join(_very_bearish)} &mdash; contrarian opportunity?", "green")
+            _has_alerts = True
+
+    if not _has_alerts:
+        st.info("No active alerts. Portfolio is in a neutral zone.")
+
+    grad_divider()
+
+    # ── Portfolio Overview ─────────────────────────────────────────────────────
+    section_header("Portfolio Overview", "#58a6ff")
+
+    overview_df = df_all.copy()
+    overview_df["Theme"] = overview_df["Ticker"].apply(
+        lambda t: ", ".join(get_ticker_themes(st.session_state.themes, t)) or "")
+
+    overview_cols = ["Ticker", "Price", "PostMktChg", "Spark30", "SetupStage", "RS_Label",
+                     "PillarAligned", "ConvexityScore", "MomentumScore", "RSI", "Pos52",
+                     "ST_BullPct", "AnalystUpside", "RevGrowthPct", "PS_Current", "ShortPct", "Theme"]
+    # Ensure required columns exist
+    for _oc in ["RS_Label", "Spark30", "PostMktChg", "ST_BullPct"]:
+        if _oc not in overview_df.columns:
+            overview_df[_oc] = None
+    overview_disp = overview_df[[c for c in overview_cols if c in overview_df.columns]].copy()
+    overview_disp["PillarAligned"] = overview_disp["PillarAligned"].apply(lambda x: "Yes" if x else "No")
+    overview_disp = overview_disp.rename(columns={
+        "PostMktChg": "AH %", "Spark30": "30d", "SetupStage": "Stage", "RS_Label": "RS",
+        "PillarAligned": "Aligned", "ConvexityScore": "Convexity", "MomentumScore": "Momentum",
+        "Pos52": "52wk Pos", "ST_BullPct": "Sentiment",
+        "AnalystUpside": "Upside %",
+        "RevGrowthPct": "Rev Growth %", "PS_Current": "P/S", "ShortPct": "Short %",
+    })
+    overview_disp = overview_disp.sort_values("Convexity", ascending=False).reset_index(drop=True)
+
+    _overview_col_config = {
+        "30d": st.column_config.LineChartColumn("30d Trend", width="small"),
+        "Convexity": st.column_config.ProgressColumn("Convexity", min_value=0, max_value=100, format="%d"),
+        "Momentum": st.column_config.ProgressColumn("Momentum", min_value=0, max_value=100, format="%d"),
+        "AH %": st.column_config.NumberColumn("AH %", format="%.2f%%"),
+    }
+    st.dataframe(
+        overview_disp,
+        column_config=_overview_col_config,
+        use_container_width=True, hide_index=True,
+        height=min(800, 38 * len(overview_disp) + 40),
+    )
+    st.download_button("Export Overview CSV",
+                       overview_disp.drop(columns=["30d"], errors="ignore").to_csv(index=False),
+                       "portfolio_overview.csv", "text/csv", key="dl_overview")
+
+    grad_divider()
+    st.caption(f"Data as of {_data_ts}")
+
+# ── TAB: Convexity ───────────────────────────────────────────────────────────
+
+with tab_conv:
+    # ── Four-Pillar Alignment (moved from Dashboard) ─────────────────────────
+    section_header("Four-Pillar Alignment", "#58a6ff")
     st.caption("Technical + Fundamental + Thematic + Narrative — all four must score >= 50 for full alignment.")
 
     aligned_tickers = df_all[df_all["PillarAligned"] == True]
@@ -1294,7 +2444,6 @@ with tab_dash:
     if aligned_count > 0:
         st.success(f"**{aligned_count} fully aligned ticker{'s' if aligned_count != 1 else ''}** — all 4 pillars >= 50: "
                    f"**{', '.join(aligned_tickers['Ticker'].tolist())}**")
-        # Show aligned tickers detail
         for _, arow in aligned_tickers.sort_values("PillarTech", ascending=False).iterrows():
             stage = arow.get("SetupStage", "Neutral")
             st.markdown(
@@ -1305,64 +2454,41 @@ with tab_dash:
     else:
         st.info("No tickers currently have all four pillars aligned (>= 50).")
 
-    # Full pillar table for all tickers
-    _stage_colors = {
-        "Basing": "#3498db", "Emerging": "#2ecc71", "Trending": "#27ae60",
-        "Extended": "#e67e22", "Breaking Down": "#e74c3c", "Neutral": "#888",
-    }
+    with st.expander("Four-Pillar Detail", expanded=True):
+        pillar_df = df_all.copy()
+        pillar_df["_strong_count"] = (
+            (pillar_df["PillarTech"] >= 50).astype(int) +
+            (pillar_df["PillarFund"] >= 50).astype(int) +
+            (pillar_df["PillarTheme"] >= 50).astype(int) +
+            (pillar_df["PillarNarr"] >= 50).astype(int)
+        )
+        pillar_df["_avg_pillar"] = (
+            pillar_df["PillarTech"] + pillar_df["PillarFund"] +
+            pillar_df["PillarTheme"] + pillar_df["PillarNarr"]
+        ) / 4
+        pillar_df = pillar_df.sort_values(["_strong_count", "_avg_pillar"], ascending=[False, False])
+        pillar_disp = pillar_df[["Ticker", "Price", "SetupStage", "PillarTech", "PillarFund",
+                                  "PillarTheme", "PillarNarr", "PillarAligned"]].copy()
+        pillar_disp = pillar_disp.rename(columns={
+            "SetupStage": "Stage", "PillarTech": "Technical", "PillarFund": "Fundamental",
+            "PillarTheme": "Thematic", "PillarNarr": "Narrative", "PillarAligned": "Aligned",
+        }).reset_index(drop=True)
+        pillar_disp["Aligned"] = pillar_disp["Aligned"].apply(lambda x: "Yes" if x else "No")
+        pillar_styled = (pillar_disp.style
+            .background_gradient(subset=["Technical", "Fundamental", "Thematic", "Narrative"],
+                                 cmap="RdYlGn", vmin=0, vmax=100)
+            .map(_color_stage, subset=["Stage"])
+            .map(lambda v: _color_aligned(v == "Yes"), subset=["Aligned"])
+            .format({"Price": "${:.2f}", "Technical": "{:.0f}", "Fundamental": "{:.0f}",
+                      "Thematic": "{:.0f}", "Narrative": "{:.0f}"}, na_rep="N/A")
+        )
+        st.dataframe(pillar_styled, width="stretch", hide_index=True)
 
-    def _color_stage(val):
-        color = _stage_colors.get(val, "#888")
-        return f"color: {color}"
+    grad_divider()
 
-    def _color_aligned(val):
-        if val:
-            return "background-color: #1a3a2a; color: #2ecc71"
-        return "background-color: #5b2c2c; color: #ff6b6b"
-
-    # Compute strong pillar count and average for sorting
-    pillar_df = df_all.copy()
-    pillar_df["_strong_count"] = (
-        (pillar_df["PillarTech"] >= 50).astype(int) +
-        (pillar_df["PillarFund"] >= 50).astype(int) +
-        (pillar_df["PillarTheme"] >= 50).astype(int) +
-        (pillar_df["PillarNarr"] >= 50).astype(int)
-    )
-    pillar_df["_avg_pillar"] = (
-        pillar_df["PillarTech"] + pillar_df["PillarFund"] +
-        pillar_df["PillarTheme"] + pillar_df["PillarNarr"]
-    ) / 4
-    pillar_df = pillar_df.sort_values(["_strong_count", "_avg_pillar"], ascending=[False, False])
-
-    pillar_disp = pillar_df[["Ticker", "Price", "SetupStage", "PillarTech", "PillarFund",
-                              "PillarTheme", "PillarNarr", "PillarAligned"]].copy()
-    pillar_disp = pillar_disp.rename(columns={
-        "SetupStage": "Stage", "PillarTech": "Technical", "PillarFund": "Fundamental",
-        "PillarTheme": "Thematic", "PillarNarr": "Narrative", "PillarAligned": "Aligned",
-    }).reset_index(drop=True)
-    pillar_disp["Aligned"] = pillar_disp["Aligned"].apply(lambda x: "Yes" if x else "No")
-
-    pillar_styled = (pillar_disp.style
-        .background_gradient(subset=["Technical", "Fundamental", "Thematic", "Narrative"],
-                             cmap="RdYlGn", vmin=0, vmax=100)
-        .map(_color_stage, subset=["Stage"])
-        .map(lambda v: _color_aligned(v == "Yes"), subset=["Aligned"])
-        .format({
-            "Price": "${:.2f}",
-            "Technical": "{:.0f}",
-            "Fundamental": "{:.0f}",
-            "Thematic": "{:.0f}",
-            "Narrative": "{:.0f}",
-        }, na_rep="N/A")
-    )
-    st.dataframe(pillar_styled, use_container_width=True, hide_index=True)
-
-    st.divider()
-
-    # ── Top Convexity Picks (kept, moved below pillars) ──
-    st.subheader("Top Convexity Picks")
+    # ── Top Convexity Picks ──────────────────────────────────────────────────
+    section_header("Top Convexity Picks", "#f1c40f")
     st.caption("Highest combined convexity score — the best risk/reward setups right now.")
-
     top5 = df_all.sort_values("ConvexityScore", ascending=False).head(5)
     for rank_i, (_, row) in enumerate(top5.iterrows(), 1):
         reasons = []
@@ -1378,7 +2504,7 @@ with tab_dash:
         short = _safe(row.get("ShortPct"))
         if short > 8:
             reasons.append(f"{short:.0f}% short (squeeze fuel)")
-        if not row.get("FCFPositive") and rev > 20:
+        if not row.get("FCFPositive") and rev and rev > 20:
             reasons.append("pre-EBITDA flip")
         if _safe(row.get("RSI"), 50) <= 40:
             reasons.append(f"RSI oversold ({row['RSI']:.0f})")
@@ -1390,195 +2516,13 @@ with tab_dash:
             f"Convexity **{row['ConvexityScore']:.0f}**  |  ${row['Price']}  |  {reason_str}"
         )
 
-    st.divider()
+    grad_divider()
 
-    # ── b) Active Alerts (kept) ──
-    st.subheader("Active Alerts")
-    overbought = df_price[df_price["RSI"] >= 70]["Ticker"].tolist()
-    oversold   = df_price[df_price["RSI"] <= 30]["Ticker"].tolist()
-    breakouts  = df_price[df_price["Breakout"] == True]["Ticker"].tolist()
-    vol_spikes = df_price[df_price["RelVol"] >= 2.0]["Ticker"].tolist()
-
-    alerts = []
-    if oversold:
-        alerts.append(f"**Oversold** (RSI <= 30): {', '.join(oversold)} -- potential entry")
-    if overbought:
-        alerts.append(f"**Overbought** (RSI >= 70): {', '.join(overbought)} -- consider trimming")
-    if breakouts:
-        alerts.append(f"**52wk Breakout** (>= 95%): {', '.join(breakouts)} -- momentum confirmation")
-    if vol_spikes:
-        alerts.append(f"**Volume Spike** (>= 2x avg): {', '.join(vol_spikes)} -- unusual activity")
-
-    if alerts:
-        for a in alerts:
-            st.markdown(f"- {a}")
-    else:
-        st.info("No active alerts. Portfolio is in a neutral zone.")
-
-    st.divider()
-
-    # ── c) Setup Stage Summary ──
-    st.subheader("Setup Stage Summary")
-    st.caption("Where each ticker sits in the swing-trading lifecycle.")
-
-    _stage_descriptions = {
-        "Basing": "watch for entry",
-        "Emerging": "early momentum",
-        "Trending": "hold/ride",
-        "Extended": "consider trimming",
-        "Breaking Down": "review thesis",
-        "Neutral": "no clear stage",
-    }
-    for stage_name in ["Basing", "Emerging", "Trending", "Extended", "Breaking Down", "Neutral"]:
-        stage_tickers = df_all[df_all["SetupStage"] == stage_name]["Ticker"].tolist()
-        if stage_tickers:
-            desc = _stage_descriptions.get(stage_name, "")
-            color = _stage_colors.get(stage_name, "#888")
-            st.markdown(
-                f"<span style='color:{color};font-weight:bold'>{stage_name}</span> "
-                f"({desc}): **{', '.join(stage_tickers)}**",
-                unsafe_allow_html=True,
-            )
-
-    st.divider()
-
-    # ── d) Portfolio Overview table (kept, with Stage and Aligned columns added) ──
-    st.subheader("Portfolio Overview")
-    st.caption("All tickers at a glance. Convexity and Momentum are gradient-coloured. RSI and 52wk Pos are conditionally highlighted.")
-    st.caption("⚠️ Short interest data is typically 2 weeks stale (FINRA bi-monthly reporting).")
-
-    overview_df = df_all.copy()
-    overview_df["Theme"] = overview_df["Ticker"].apply(
-        lambda t: ", ".join(get_ticker_themes(st.session_state.themes, t)) or "")
-
-    overview_cols = ["Ticker", "Price", "SetupStage", "PillarAligned", "ConvexityScore", "MomentumScore", "RSI", "Pos52",
-                     "AnalystUpside", "RevGrowthPct", "PS_Current", "ShortPct", "Theme"]
-    overview_disp = overview_df[overview_cols].copy()
-    overview_disp["PillarAligned"] = overview_disp["PillarAligned"].apply(lambda x: "Yes" if x else "No")
-    overview_disp = overview_disp.rename(columns={
-        "SetupStage": "Stage", "PillarAligned": "Aligned",
-        "ConvexityScore": "Convexity", "MomentumScore": "Momentum",
-        "Pos52": "52wk Pos", "AnalystUpside": "Upside %",
-        "RevGrowthPct": "Rev Growth %", "PS_Current": "P/S", "ShortPct": "Short %",
-    })
-    overview_disp = overview_disp.sort_values("Convexity", ascending=False).reset_index(drop=True)
-
-    def _color_rsi(val):
-        if pd.isna(val):
-            return ""
-        if val >= 70:
-            return "background-color: #5b2c2c; color: #ff6b6b"
-        if val <= 30:
-            return "background-color: #1a3a2a; color: #2ecc71"
-        return ""
-
-    def _color_pos52(val):
-        if pd.isna(val):
-            return ""
-        if val >= 70:
-            return "background-color: #1a3a2a; color: #2ecc71"
-        if val <= 20:
-            return "background-color: #5b2c2c; color: #ff6b6b"
-        return ""
-
-    def _color_upside(val):
-        if pd.isna(val):
-            return ""
-        if val >= 30:
-            return "background-color: #1a3a2a; color: #2ecc71"
-        if val <= -10:
-            return "background-color: #5b2c2c; color: #ff6b6b"
-        return ""
-
-    def _color_short(val):
-        if pd.isna(val):
-            return ""
-        if val >= 15:
-            return "background-color: #3a2c1a; color: #f39c12"
-        return ""
-
-    styled = (overview_disp.style
-        .background_gradient(subset=["Convexity"], cmap="RdYlGn", vmin=20, vmax=80)
-        .background_gradient(subset=["Momentum"], cmap="RdYlGn", vmin=20, vmax=80)
-        .map(_color_rsi, subset=["RSI"])
-        .map(_color_pos52, subset=["52wk Pos"])
-        .map(_color_upside, subset=["Upside %"])
-        .map(_color_short, subset=["Short %"])
-        .map(_color_stage, subset=["Stage"])
-        .map(lambda v: _color_aligned(v == "Yes"), subset=["Aligned"])
-        .format({
-            "Price": "${:.2f}",
-            "Convexity": "{:.0f}",
-            "Momentum": "{:.0f}",
-            "RSI": "{:.0f}",
-            "52wk Pos": "{:.0f}%",
-            "Upside %": lambda x: f"{x:+.0f}%" if pd.notna(x) else "N/A",
-            "Rev Growth %": lambda x: f"{x:+.0f}%" if pd.notna(x) else "N/A",
-            "P/S": lambda x: f"{x:.1f}x" if pd.notna(x) else "N/A",
-            "Short %": lambda x: f"{x:.1f}%" if pd.notna(x) else "N/A",
-        }, na_rep="N/A")
-    )
-    st.dataframe(styled, use_container_width=True, hide_index=True)
-    st.download_button("Export Overview CSV", overview_disp.to_csv(index=False),
-                       "portfolio_overview.csv", "text/csv", key="dl_overview")
-
-    st.divider()
-
-    # ── e) Upcoming Earnings (kept) ──
-    st.subheader("Upcoming Earnings")
-    earn_data = df_all[df_all["NextEarnings"].notna() & (df_all["NextEarnings"] != "")][
-        ["Ticker", "NextEarnings", "ConvexityScore", "RSI", "Price"]
-    ].copy()
-    if not earn_data.empty:
-        earn_data["EarningsDate"] = pd.to_datetime(earn_data["NextEarnings"], errors="coerce")
-        earn_data = earn_data.dropna(subset=["EarningsDate"]).sort_values("EarningsDate")
-        today_dt = pd.Timestamp.now().normalize()
-        earn_upcoming = earn_data[earn_data["EarningsDate"] >= today_dt - pd.Timedelta(days=1)]
-        if not earn_upcoming.empty:
-            fig_earn = go.Figure()
-            for _, erow in earn_upcoming.iterrows():
-                days_away = (erow["EarningsDate"] - today_dt).days
-                color = "#e74c3c" if days_away <= 7 else "#f39c12" if days_away <= 21 else "#3498db"
-                fig_earn.add_trace(go.Scatter(
-                    x=[erow["EarningsDate"]], y=[erow["Ticker"]],
-                    mode="markers+text", text=[f"  {days_away}d"],
-                    textposition="middle right", textfont=dict(size=11, color=color),
-                    marker=dict(size=14, color=color, symbol="diamond"),
-                    hovertemplate=(
-                        f"<b>{erow['Ticker']}</b><br>"
-                        f"Earnings: {erow['NextEarnings']}<br>"
-                        f"Days away: {days_away}<br>"
-                        f"Convexity: {erow['ConvexityScore']:.0f}<br>"
-                        f"RSI: {erow['RSI']:.0f}<extra></extra>"
-                    ),
-                    showlegend=False,
-                ))
-            fig_earn.add_vline(x=today_dt.isoformat(), line_dash="dash", line_color="#2ecc71")
-            fig_earn.add_annotation(x=today_dt.isoformat(), y=1, yref="paper",
-                                    text="Today", showarrow=False,
-                                    font=dict(color="#2ecc71", size=11))
-            fig_earn.update_layout(
-                height=max(200, len(earn_upcoming) * 35 + 60),
-                xaxis=dict(title="Date", gridcolor="#21262d"),
-                margin=dict(l=60, r=40, t=20, b=40), **DARK,
-            )
-            st.plotly_chart(fig_earn, use_container_width=True)
-            st.caption("Red = this week  |  Orange = next 3 weeks  |  Blue = later")
-        else:
-            st.info("No upcoming earnings dates found in the portfolio.")
-    else:
-        st.info("No earnings date data available.")
-
-    st.divider()
-    st.caption(f"Dashboard data refreshed: {_data_ts}")
-
-# ── TAB: Convexity ───────────────────────────────────────────────────────────
-
-with tab_conv:
-    st.subheader("Convexity Analysis")
+    # ── Convexity Analysis ───────────────────────────────────────────────────
+    section_header("Convexity Analysis", "#2ecc71")
     st.caption(
         "Two complementary lenses on asymmetric upside. "
-        "**Three-Legged Stool**: undervalued + growing + trending (the foundation). "
+        "**Value-Growth Score**: three-legged stool framework: undervalued + growing + trending (the foundation). "
         "**Asymmetry Score**: catalyst fuel — analyst upside, beta, short squeeze potential, volatility."
     )
 
@@ -1611,14 +2555,14 @@ with tab_conv:
               delta_color="inverse",
               help="P/S in top 25% of 3yr range AND RSI >= 65 — dangerous setup, negative asymmetry")
 
-    st.divider()
+    grad_divider()
 
-    # Three-Legged Stool ranking
-    st.markdown("#### Three-Legged Stool")
+    # Value-Growth Score ranking
+    st.markdown("#### Value-Growth Score")
     st.caption("Green = all three legs present. Hover for component breakdown.")
 
-    stool_sorted = df_conv.sort_values("StoolScore", ascending=False)
-    stool_comps  = stool_sorted.apply(lambda r: calc_three_legged_stool(r)[1], axis=1)
+    stool_sorted = df_conv.sort_values("VGScore", ascending=False)
+    stool_comps  = stool_sorted.apply(lambda r: calc_value_growth_score(r)[1], axis=1)
 
     comp_names = ["Undervalued (P/S)", "Revenue Growth", "Sector Momentum"]
     comp_colors = ["#9b59b6", "#2ecc71", "#3498db"]
@@ -1641,7 +2585,7 @@ with tab_conv:
                         annotation_text="Strong setup", annotation_font_color="#f39c12")
     st.plotly_chart(fig_stool, use_container_width=True)
 
-    st.divider()
+    grad_divider()
 
     # Asymmetry score breakdown
     st.markdown("#### Asymmetry Score Breakdown")
@@ -1669,7 +2613,7 @@ with tab_conv:
     )
     st.plotly_chart(fig_asym, use_container_width=True)
 
-    st.divider()
+    grad_divider()
 
     # Compressed Spring chart (P/S historical position)
     has_ps_hist = df_conv[df_conv["PS_HistPos"].notna()].sort_values("PS_HistPos")
@@ -1709,7 +2653,7 @@ with tab_conv:
 
     # Priced for Perfection warning
     if perfection:
-        st.divider()
+        grad_divider()
         st.markdown("#### Priced for Perfection — Negative Asymmetry")
         st.warning(
             f"**{', '.join(perfection)}** — these stocks have P/S in the top 25% of their 3-year range "
@@ -1727,9 +2671,9 @@ with tab_conv:
             "PS_Current": "P/S", "PS_HistPos": "P/S Position",
             "PS_3yr_Min": "3yr Low", "PS_3yr_Max": "3yr High",
         })
-        st.dataframe(pfp_tbl, use_container_width=True, hide_index=True)
+        st.dataframe(pfp_tbl, width="stretch", hide_index=True)
 
-    st.divider()
+    grad_divider()
 
     # Valuation metrics table
     st.markdown("#### Valuation Metrics")
@@ -1772,11 +2716,11 @@ with tab_conv:
         "Instit%": lambda x: f"{x:.1f}%" if pd.notna(x) else "N/A",
         "Days to Cover": lambda x: f"{x:.1f}d" if pd.notna(x) and x else "N/A",
     }, na_rep="N/A")
-    st.dataframe(val_styled, use_container_width=True, hide_index=True)
+    st.dataframe(val_styled, width="stretch", hide_index=True)
     st.download_button("Export Valuation CSV", val_tbl.to_csv(index=False),
                        "valuation_metrics.csv", "text/csv", key="dl_val")
 
-    st.divider()
+    grad_divider()
 
     # EBITDA Turn Watchlist
     st.markdown("#### EBITDA Turn Watchlist")
@@ -1805,16 +2749,16 @@ with tab_conv:
             "Cash Runway": lambda x: f"{x:.0f} months" if pd.notna(x) and x else "N/A",
             "P/S": lambda x: f"{x:.1f}x" if pd.notna(x) and x else "N/A",
         }, na_rep="N/A")
-        st.dataframe(eb_styled, use_container_width=True, hide_index=True)
+        st.dataframe(eb_styled, width="stretch", hide_index=True)
     else:
         st.info("No pre-flip candidates in current selection.")
 
-    st.divider()
+    grad_divider()
 
     # Rankings (merged from former Rankings tab)
-    st.subheader("Convexity vs Momentum Rankings")
+    section_header("Convexity vs Momentum Rankings", "#f1c40f")
     st.caption(
-        "**Convexity** (primary) = average of Asymmetry + Three-Legged Stool scores — "
+        "**Convexity** (primary) = average of Asymmetry + Value-Growth scores — "
         "identifies the best risk/reward setups. "
         "**Momentum** (secondary) = stocks already trending."
     )
@@ -1839,17 +2783,17 @@ with tab_conv:
                                xaxis=dict(range=[0,115], title="Score"),
                                margin=dict(l=60,r=20,t=20,b=40), showlegend=False, **DARK)
         st.plotly_chart(fig_conv, use_container_width=True)
-        conv_tbl = conv[["Ticker","Price","ConvexityScore","AsymmetryScore","StoolScore","AnalystUpside","NextEarnings"]].copy()
+        conv_tbl = conv[["Ticker","Price","ConvexityScore","AsymmetryScore","VGScore","AnalystUpside","NextEarnings"]].copy()
         conv_tbl["NextEarnings"] = conv_tbl["NextEarnings"].fillna("N/A")
         conv_tbl = conv_tbl.rename(columns={
             "ConvexityScore":"Convexity","AsymmetryScore":"Asym",
-            "StoolScore":"Stool","AnalystUpside":"Upside","NextEarnings":"Next Earnings",
+            "VGScore":"V-G Score","AnalystUpside":"Upside","NextEarnings":"Next Earnings",
         })
-        st.dataframe(conv_tbl, use_container_width=True, hide_index=False,
+        st.dataframe(conv_tbl, width="stretch", hide_index=False,
                      column_config={
                          "Convexity": st.column_config.ProgressColumn("Convexity", min_value=0, max_value=100, format="%d"),
                          "Asym": st.column_config.ProgressColumn("Asym", min_value=0, max_value=100, format="%d"),
-                         "Stool": st.column_config.ProgressColumn("Stool", min_value=0, max_value=100, format="%d"),
+                         "V-G Score": st.column_config.ProgressColumn("V-G Score", min_value=0, max_value=100, format="%d"),
                          "Upside": st.column_config.NumberColumn("Upside", format="%+.0f%%"),
                          "Price": st.column_config.NumberColumn("Price", format="$%.2f"),
                      })
@@ -1875,7 +2819,7 @@ with tab_conv:
         mom_tbl = mom[["Ticker","Price","RSI","Pos52","NextEarnings","MomentumScore"]].copy()
         mom_tbl["NextEarnings"] = mom_tbl["NextEarnings"].fillna("N/A")
         mom_tbl = mom_tbl.rename(columns={"Pos52":"52wk Pos","NextEarnings":"Next Earnings","MomentumScore":"Score"})
-        st.dataframe(mom_tbl, use_container_width=True, hide_index=False,
+        st.dataframe(mom_tbl, width="stretch", hide_index=False,
                      column_config={
                          "Score": st.column_config.ProgressColumn("Score", min_value=0, max_value=100, format="%d"),
                          "52wk Pos": st.column_config.NumberColumn("52wk Pos", format="%.1f%%"),
@@ -1885,7 +2829,7 @@ with tab_conv:
         st.download_button("Export Momentum CSV", mom_tbl.to_csv(index=False),
                            "momentum_ranking.csv", "text/csv", key="dl_mom")
 
-    st.divider()
+    grad_divider()
     st.markdown("#### Re-rating Candidates")
     st.caption("Tickers ranked 3+ places higher on Convexity than Momentum — potential catalyst plays not yet priced in.")
     conv_rank = {row["Ticker"]: i+1 for i, row in conv.iterrows()}
@@ -1898,14 +2842,14 @@ with tab_conv:
             if mom_rank.get(t,0) - conv_rank.get(t,0) >= 3]
     if divs:
         st.dataframe(pd.DataFrame(divs).sort_values("Rank Gain", ascending=False),
-                     use_container_width=True, hide_index=True)
+                     width="stretch", hide_index=True)
     else:
         st.info("No major divergences right now.")
 
 # ── TAB: Themes ──────────────────────────────────────────────────────────────
 
 with tab_themes:
-    st.subheader("Theme / Sub-Sector Analysis")
+    section_header("Theme / Sub-Sector Analysis", "#9b59b6")
     st.caption(
         "Custom sub-sector groupings benchmarked against representative ETFs. "
         "See where capital is flowing and how your picks compare to the sector."
@@ -2019,7 +2963,7 @@ with tab_themes:
         st.info("ETF benchmark data not available for momentum map.")
 
     # ── (b) Theme Momentum Trend (ETF-based) ──
-    st.divider()
+    grad_divider()
     st.markdown("#### Theme Momentum Trend")
     st.caption(
         "ETF benchmark relative strength vs SPY. Compares 1-month vs 3-month to detect acceleration/deceleration. "
@@ -2094,7 +3038,7 @@ with tab_themes:
                     "Picks vs ETF": lambda x: f"{x:+.1f}%" if pd.notna(x) else "--",
                 }, na_rep="N/A")
             )
-            st.dataframe(trend_styled, use_container_width=True, hide_index=True)
+            st.dataframe(trend_styled, width="stretch", hide_index=True)
             st.caption(
                 "Accelerating = 1m RS > 3m RS (capital flowing in)  |  "
                 "Decelerating = 1m RS < 3m RS (capital flowing out)  |  "
@@ -2106,7 +3050,7 @@ with tab_themes:
         st.info("SPY or ETF data not available for momentum trends.")
 
     # ── (c) Theme Scores (holdings only, with ETF context) ──
-    st.divider()
+    grad_divider()
     st.markdown("#### Theme Scores (Your Holdings)")
     st.caption("Convexity and momentum scores for themes where you hold tickers. ETF 3m return shown for context.")
 
@@ -2159,7 +3103,7 @@ with tab_themes:
             barmode="group", height=400,
             yaxis_title="Avg Score",
             yaxis2=dict(title="ETF 3m Return (%)", overlaying="y", side="right",
-                        showgrid=False, titlefont=dict(color="#f39c12"),
+                        showgrid=False, title_font=dict(color="#f39c12"),
                         tickfont=dict(color="#f39c12")),
             legend=dict(orientation="h", yanchor="bottom", y=1.02),
             margin=dict(l=40, r=60, t=50, b=40), **DARK,
@@ -2168,7 +3112,7 @@ with tab_themes:
         st.plotly_chart(fig_th, use_container_width=True)
 
     # ── (d) Theme Drilldown ──
-    st.divider()
+    grad_divider()
     st.markdown("#### Theme Drilldown")
     for theme_name in _all_theme_names:
         user_tks = _user_tickers_map.get(theme_name, [])
@@ -2197,7 +3141,7 @@ with tab_themes:
                     "YTD Ret": lambda x: f"{x:+.1f}%" if pd.notna(x) else "N/A",
                     "1y Ret": lambda x: f"{x:+.1f}%" if pd.notna(x) else "N/A",
                 }, na_rep="N/A")
-                st.dataframe(etf_styled, use_container_width=True, hide_index=True)
+                st.dataframe(etf_styled, width="stretch", hide_index=True)
                 st.markdown("**Your Picks:**")
 
             drill = sub[["Ticker", "Price", "RSI", "Pos52", "ConvexityScore", "MomentumScore", "Ret1m", "Ret3m"]].copy()
@@ -2218,7 +3162,7 @@ with tab_themes:
                 "1m Ret": lambda x: f"{x:+.1f}%" if pd.notna(x) else "N/A",
                 "3m Ret": lambda x: f"{x:+.1f}%" if pd.notna(x) else "N/A",
             }, na_rep="N/A")
-            st.dataframe(dr_styled, use_container_width=True, hide_index=True)
+            st.dataframe(dr_styled, width="stretch", hide_index=True)
 
     # Untagged tickers
     all_themed = set()
@@ -2233,7 +3177,7 @@ with tab_themes:
 # ── TAB: Charts ─────────────────────────────────────────────────────────────
 
 with tab_charts:
-    st.subheader("Price Charts")
+    section_header("Price Charts", "#3498db")
 
     from plotly.subplots import make_subplots
 
@@ -2252,74 +3196,71 @@ with tab_charts:
         _ch_ma_short_label, _ch_ma_long_label = "20-MA", "50-MA"
         st.caption("6-month daily price action with 20-day and 50-day moving averages.")
 
-    chart_tickers = st.multiselect(
-        "Select tickers to chart",
-        df_price["Ticker"].tolist(),
-        default=df_all.sort_values("ConvexityScore", ascending=False)["Ticker"].head(4).tolist()
-        if len(df_all) >= 4 else df_all["Ticker"].tolist(),
-        key="chart_tickers"
+    # Build selectable options: SPY + QQQ first, then portfolio tickers
+    _chart_options = ["SPY", "QQQ"] + [t for t in df_price["Ticker"].tolist() if t not in ("SPY", "QQQ")]
+    _chart_default = "SPY" if "SPY" not in df_price["Ticker"].tolist() else df_price["Ticker"].tolist()[0]
+    chart_ticker = st.selectbox(
+        "Select ticker to chart",
+        _chart_options,
+        index=0,
+        key="chart_ticker"
     )
 
-    if chart_tickers:
-        chart_cols = st.columns(min(len(chart_tickers), 2))
-        for i, ct in enumerate(chart_tickers):
-            with chart_cols[i % 2]:
-                try:
-                    ch_data = yf.download(ct, period=_ch_period, interval=_ch_interval,
-                                          progress=False, auto_adjust=True)
-                    if ch_data.empty:
-                        st.caption(f"{ct}: no data")
-                        continue
-                    ch_close = ch_data["Close"].squeeze()
-                    ch_vol = ch_data["Volume"].squeeze()
-                    ch_ma_s = ch_close.rolling(_ch_ma_short).mean()
-                    ch_ma_l = ch_close.rolling(_ch_ma_long).mean()
+    if chart_ticker:
+        try:
+            ch_data = yf.download(chart_ticker, period=_ch_period, interval=_ch_interval,
+                                  progress=False, auto_adjust=True)
+            if ch_data.empty:
+                st.caption(f"{chart_ticker}: no data")
+            else:
+                ch_close = ch_data["Close"].squeeze()
+                ch_vol = ch_data["Volume"].squeeze()
+                ch_ma_s = ch_close.rolling(_ch_ma_short).mean()
+                ch_ma_l = ch_close.rolling(_ch_ma_long).mean()
 
-                    # Get current metrics for subtitle
-                    cr = df_all[df_all["Ticker"] == ct]
-                    subtitle = ""
-                    if not cr.empty:
-                        cr = cr.iloc[0]
-                        subtitle = f"RSI {cr['RSI']:.0f}  |  52wk {cr['Pos52']:.0f}%  |  ATR {cr['ATR_pct']:.1f}%"
+                # Get current metrics for subtitle
+                cr = df_all[df_all["Ticker"] == chart_ticker]
+                subtitle = ""
+                if not cr.empty:
+                    cr = cr.iloc[0]
+                    subtitle = f"RSI {cr['RSI']:.0f}  |  52wk {cr['Pos52']:.0f}%  |  ATR {cr['ATR_pct']:.1f}%"
 
-                    fig_ch = make_subplots(rows=2, cols=1, shared_xaxes=True,
-                                           row_heights=[0.78, 0.22], vertical_spacing=0.03)
-                    fig_ch.add_trace(go.Scatter(
-                        x=ch_close.index, y=ch_close.values, mode="lines",
-                        name="Price", line=dict(color="#3498db", width=2),
-                    ), row=1, col=1)
-                    fig_ch.add_trace(go.Scatter(
-                        x=ch_ma_s.index, y=ch_ma_s.values, mode="lines",
-                        name=_ch_ma_short_label, line=dict(color="#2ecc71", width=1, dash="dot"),
-                    ), row=1, col=1)
-                    fig_ch.add_trace(go.Scatter(
-                        x=ch_ma_l.index, y=ch_ma_l.values, mode="lines",
-                        name=_ch_ma_long_label, line=dict(color="#f39c12", width=1, dash="dash"),
-                    ), row=1, col=1)
-                    fig_ch.add_trace(go.Bar(
-                        x=ch_vol.index, y=ch_vol.values, name="Volume",
-                        marker_color="#555", opacity=0.5, showlegend=False,
-                    ), row=2, col=1)
-                    fig_ch.update_layout(
-                        height=380,
-                        title=dict(text=f"{ct}  <span style='font-size:12px;color:#888'>{subtitle}</span>",
-                                   font=dict(size=16)),
-                        showlegend=True,
-                        legend=dict(orientation="h", yanchor="bottom", y=1.02, font=dict(size=10)),
-                        margin=dict(l=50, r=15, t=50, b=30), **DARK,
-                    )
-                    fig_ch.update_yaxes(title_text="$", row=1, col=1, gridcolor="#21262d")
-                    fig_ch.update_yaxes(row=2, col=1, gridcolor="#21262d")
-                    st.plotly_chart(fig_ch, use_container_width=True)
-                except Exception:
-                    st.caption(f"{ct}: chart unavailable")
-    else:
-        st.info("Select at least one ticker to view charts.")
+                fig_ch = make_subplots(rows=2, cols=1, shared_xaxes=True,
+                                       row_heights=[0.78, 0.22], vertical_spacing=0.03)
+                fig_ch.add_trace(go.Scatter(
+                    x=ch_close.index, y=ch_close.values, mode="lines",
+                    name="Price", line=dict(color="#3498db", width=2),
+                ), row=1, col=1)
+                fig_ch.add_trace(go.Scatter(
+                    x=ch_ma_s.index, y=ch_ma_s.values, mode="lines",
+                    name=_ch_ma_short_label, line=dict(color="#2ecc71", width=1, dash="dot"),
+                ), row=1, col=1)
+                fig_ch.add_trace(go.Scatter(
+                    x=ch_ma_l.index, y=ch_ma_l.values, mode="lines",
+                    name=_ch_ma_long_label, line=dict(color="#f39c12", width=1, dash="dash"),
+                ), row=1, col=1)
+                fig_ch.add_trace(go.Bar(
+                    x=ch_vol.index, y=ch_vol.values, name="Volume",
+                    marker_color="#555", opacity=0.5, showlegend=False,
+                ), row=2, col=1)
+                fig_ch.update_layout(
+                    height=450,
+                    title=dict(text=f"{chart_ticker}  <span style='font-size:12px;color:#888'>{subtitle}</span>",
+                               font=dict(size=16)),
+                    showlegend=True,
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, font=dict(size=10)),
+                    margin=dict(l=50, r=15, t=50, b=30), **DARK,
+                )
+                fig_ch.update_yaxes(title_text="$", row=1, col=1, gridcolor="#21262d")
+                fig_ch.update_yaxes(row=2, col=1, gridcolor="#21262d")
+                st.plotly_chart(fig_ch, use_container_width=True)
+        except Exception:
+            st.caption(f"{chart_ticker}: chart unavailable")
 
-    st.divider()
+    grad_divider()
 
     # Portfolio Map — RSI vs 52-Week Position (moved from Dashboard)
-    st.subheader("Portfolio Map — RSI vs 52-Week Position")
+    section_header("Portfolio Map — RSI vs 52-Week Position", "#f39c12")
     st.caption("Bubble size = ATR volatility. Bottom-left = weak. Top-right = strong. Bottom-right = pullback opportunity.")
     fig5 = go.Figure()
     for _, row in df_price.iterrows():
@@ -2353,55 +3294,281 @@ with tab_charts:
     )
     st.plotly_chart(fig5, use_container_width=True)
 
-    st.divider()
+    grad_divider()
 
-    # Relative Strength vs SPY (moved from Dashboard)
-    st.subheader("Relative Strength vs SPY")
-    if spy_ret:
-        rs_rows = []
-        for _, row in df_price.iterrows():
-            rs_rows.append({
-                "Ticker": row["Ticker"],
-                "1m vs SPY": round(_safe(row.get("Ret1m")) - spy_ret.get("1m", 0), 1),
-                "3m vs SPY": round(_safe(row.get("Ret3m")) - spy_ret.get("3m", 0), 1),
-                "6m vs SPY": round(_safe(row.get("Ret6m")) - spy_ret.get("6m", 0), 1),
-            })
-        df_rs = pd.DataFrame(rs_rows).sort_values("3m vs SPY", ascending=True)
+    # ── Relative Strength — Down-Day Analysis ──
+    section_header("Relative Strength — Who's Holding Up?", "#2ecc71")
+    st.caption(
+        "Stocks that refuse to go lower on market down-days are being accumulated. "
+        "**Leaders** hold up best when SPY sells off — they often lead the next rally. "
+        "**Down-Day Win Rate** = % of SPY's worst days where the stock outperformed."
+    )
 
+    rs_view = df_all[df_all["RS_Score"].notna()].copy() if "RS_Score" in df_all.columns else pd.DataFrame()
+
+    if not rs_view.empty:
+        rs_view = rs_view.sort_values("RS_Score", ascending=False)
+
+        # ── Leader / Laggard callout ──
+        leaders = rs_view[rs_view["RS_Label"] == "Leader"]["Ticker"].tolist()
+        laggards = rs_view[rs_view["RS_Label"] == "Lagging"]["Ticker"].tolist()
+        early_bottoms = rs_view[rs_view["EarlyBottom"] == True]["Ticker"].tolist()
+        col_l, col_lag, col_eb = st.columns(3)
+        with col_l:
+            st.success(f"**Leaders ({len(leaders)})**: {', '.join(leaders) if leaders else 'None'}")
+        with col_lag:
+            st.error(f"**Lagging ({len(laggards)})**: {', '.join(laggards) if laggards else 'None'}")
+        with col_eb:
+            st.info(f"**Early Bottom ({len(early_bottoms)})**: {', '.join(early_bottoms) if early_bottoms else 'None'}")
+
+        # ── RS Score chart (horizontal bar, color-coded by label) ──
+        label_colors = {"Leader": "#2ecc71", "Holding": "#f1c40f", "Lagging": "#e74c3c"}
         fig_rs = go.Figure()
-        for period, color in [("1m vs SPY", "#f1c40f"), ("3m vs SPY", "#3498db"), ("6m vs SPY", "#9b59b6")]:
+        for label, color in label_colors.items():
+            subset = rs_view[rs_view["RS_Label"] == label]
+            if subset.empty:
+                continue
             fig_rs.add_trace(go.Bar(
-                name=period.replace(" vs SPY", ""),
-                y=df_rs["Ticker"], x=df_rs[period], orientation="h",
+                name=label,
+                y=subset["Ticker"], x=subset["RS_Score"], orientation="h",
                 marker_color=color,
-                hovertemplate=f"<b>%{{y}}</b><br>{period}: %{{x:+.1f}}%<extra></extra>",
+                hovertemplate=(
+                    "<b>%{y}</b><br>"
+                    "RS Score: %{x:.0f}<br>"
+                    + "Down-Day Win Rate: %{customdata[0]:.0f}%<br>"
+                    + "Down-Day Excess: %{customdata[1]:+.2f}%<br>"
+                    + "Recent DD Excess: %{customdata[2]:+.2f}%<br>"
+                    + "Early Bottom: %{customdata[3]}<extra></extra>"
+                ),
+                customdata=subset[["DownDayWinRate", "DownDayRS", "RecentDDExcess", "EarlyBottom"]].values,
             ))
-        fig_rs.add_vline(x=0, line_color="#e6edf3", line_width=1)
         fig_rs.update_layout(
-            barmode="group", height=max(400, len(df_rs) * 36),
-            xaxis_title="Relative return vs SPY (%)",
+            barmode="stack", height=max(400, len(rs_view) * 32),
+            xaxis=dict(title="RS Score (0-100)", range=[0, 105]),
             legend=dict(orientation="h", yanchor="bottom", y=1.02),
             margin=dict(l=60, r=20, t=50, b=40), **DARK,
         )
         st.plotly_chart(fig_rs, use_container_width=True)
-        st.caption(f"SPY returns — 1m: {spy_ret.get('1m', 'N/A'):+.1f}%  |  3m: {spy_ret.get('3m', 'N/A'):+.1f}%  |  6m: {spy_ret.get('6m', 'N/A'):+.1f}%")
+
+        # ── Down-Day Win Rate scatter ──
+        st.markdown("##### Down-Day Behaviour Detail")
+        fig_dd = go.Figure()
+        for _, row in rs_view.iterrows():
+            color = label_colors.get(row.get("RS_Label", "Holding"), "#f1c40f")
+            fig_dd.add_trace(go.Scatter(
+                x=[row["DownDayWinRate"]], y=[row["RecentDDExcess"]],
+                mode="markers+text", text=[row["Ticker"]], textposition="top center",
+                marker=dict(size=14, color=color, line=dict(width=1, color="#0d1117")),
+                hovertemplate=(
+                    f"<b>{row['Ticker']}</b><br>"
+                    f"Win Rate: {row['DownDayWinRate']:.0f}%<br>"
+                    f"Recent Excess: {row['RecentDDExcess']:+.2f}%/day<br>"
+                    f"RS Score: {row['RS_Score']:.0f}<extra></extra>"
+                ),
+                showlegend=False,
+            ))
+        fig_dd.add_hline(y=0, line_dash="dot", line_color="#555", line_width=1)
+        fig_dd.add_vline(x=50, line_dash="dot", line_color="#555", line_width=1)
+        for (x, y, lbl) in [(75, 0.4, "STRONG LEADER"), (25, 0.4, "RECOVERING"),
+                             (75, -0.4, "FADING"), (25, -0.4, "WEAK")]:
+            fig_dd.add_annotation(x=x, y=y, text=lbl, showarrow=False,
+                                  font=dict(color="#555", size=11, family="monospace"))
+        fig_dd.update_layout(
+            height=450,
+            xaxis=dict(title="Down-Day Win Rate (%)", gridcolor="#21262d"),
+            yaxis=dict(title="Recent Down-Day Excess Return (%/day)", gridcolor="#21262d"),
+            margin=dict(l=60, r=20, t=20, b=60), **DARK,
+        )
+        st.plotly_chart(fig_dd, use_container_width=True)
+
+        # ── RS Table (colour-coded) ──
+        rs_tbl = rs_view[["Ticker", "RS_Score", "RS_Rank", "RS_Label", "DownDayWinRate",
+                          "DownDayRS", "RecentDDExcess", "EarlyBottom", "DaysSinceLow",
+                          "RS_1m", "RS_3m"]].copy()
+        rs_tbl.columns = ["Ticker", "RS Score", "Rank", "Status", "DD Win%",
+                          "DD Excess", "Recent DD", "Early Bottom", "Days Since Low",
+                          "1m vs SPY", "3m vs SPY"]
+
+        def _color_rs_label(val):
+            if val == "Leader":
+                return "background-color: #1a3a2a; color: #2ecc71"
+            elif val == "Lagging":
+                return "background-color: #5b2c2c; color: #ff6b6b"
+            return "background-color: #3d3520; color: #f1c40f"
+
+        styled_rs = (rs_tbl.style
+            .map(_color_rs_label, subset=["Status"])
+            .background_gradient(cmap="RdYlGn", subset=["RS Score", "DD Win%", "1m vs SPY", "3m vs SPY"])
+            .format({
+                "RS Score": "{:.0f}", "DD Win%": "{:.0f}%",
+                "DD Excess": "{:+.2f}%", "Recent DD": "{:+.2f}%",
+                "Days Since Low": "{:.0f}",
+                "1m vs SPY": "{:+.1f}%", "3m vs SPY": "{:+.1f}%",
+            })
+        )
+        st.dataframe(styled_rs, use_container_width=True, hide_index=True)
+
+        if spy_ret:
+            st.caption(f"SPY returns — 1m: {spy_ret.get('1m', 'N/A'):+.1f}%  |  3m: {spy_ret.get('3m', 'N/A'):+.1f}%  |  6m: {spy_ret.get('6m', 'N/A'):+.1f}%")
     else:
-        st.info("SPY benchmark data unavailable.")
+        st.info("Relative strength data unavailable — need sufficient price history.")
 
 # ── TAB: Signals ─────────────────────────────────────────────────────────────
 
 with tab_sig:
-    st.subheader("Analyst Targets, News & Sentiment")
+    # ── Signal Summary (quick-glance metrics) ────────────────────────────────
+    section_header("Signal Summary", "#58a6ff")
 
-    with st.spinner("Loading news & sentiment..."):
-        df_extras = fetch_extras(st.session_state.tickers)
-        st_data   = fetch_stocktwits(st.session_state.tickers)
+    _sig_insider_buying = df_all[df_all["InsiderSignal"] == "Buying"]["Ticker"].tolist()
+    _sig_analyst_upside = df_all[df_all["AnalystUpside"].notna() & (df_all["AnalystUpside"] > 20)]["Ticker"].tolist()
+    _sig_short_squeeze = df_all[df_all["ShortPct"].notna() & (df_all["ShortPct"] > 10)]["Ticker"].tolist()
+    _sig_earn_14d = []
+    _earn_tmp = df_all[df_all["NextEarnings"].notna() & (df_all["NextEarnings"] != "")].copy()
+    if not _earn_tmp.empty:
+        _earn_tmp["_ed"] = pd.to_datetime(_earn_tmp["NextEarnings"], errors="coerce")
+        _today_sig = pd.Timestamp.now().normalize()
+        _earn_14 = _earn_tmp[(_earn_tmp["_ed"] >= _today_sig) & (_earn_tmp["_ed"] <= _today_sig + pd.Timedelta(days=14))]
+        _sig_earn_14d = _earn_14["Ticker"].tolist()
+
+    _ss1, _ss2, _ss3, _ss4 = st.columns(4)
+    _ss1.metric("Insider Buying", len(_sig_insider_buying),
+                ", ".join(_sig_insider_buying) if _sig_insider_buying else "None")
+    _ss2.metric("Analyst Upside >20%", len(_sig_analyst_upside),
+                ", ".join(_sig_analyst_upside[:5]) if _sig_analyst_upside else "None")
+    _ss3.metric("Short >10% (Squeeze)", len(_sig_short_squeeze),
+                ", ".join(_sig_short_squeeze) if _sig_short_squeeze else "None")
+    _ss4.metric("Earnings <14d", len(_sig_earn_14d),
+                ", ".join(_sig_earn_14d) if _sig_earn_14d else "None")
+
+    grad_divider()
+
+    # ── Setup Stage Summary ──────────────────────────────────────────────────
+    section_header("Setup Stage Summary", "#3498db")
+    st.caption("Where each ticker sits in the swing-trading lifecycle.")
+    _stage_descriptions = {
+        "Basing": "watch for entry",
+        "Emerging": "early momentum",
+        "Trending": "hold/ride",
+        "Extended": "consider trimming",
+        "Breaking Down": "review thesis",
+        "Neutral": "no clear stage",
+    }
+    for stage_name in ["Basing", "Emerging", "Trending", "Extended", "Breaking Down", "Neutral"]:
+        stage_tickers = df_all[df_all["SetupStage"] == stage_name]["Ticker"].tolist()
+        if stage_tickers:
+            desc = _stage_descriptions.get(stage_name, "")
+            color = _stage_colors.get(stage_name, "#888")
+            st.markdown(
+                f"<span style='color:{color};font-weight:bold'>{stage_name}</span> "
+                f"({desc}): **{', '.join(stage_tickers)}**",
+                unsafe_allow_html=True,
+            )
+
+    grad_divider()
+
+    # ── Upcoming Earnings ────────────────────────────────────────────────────
+    section_header("Upcoming Earnings", "#f39c12")
+    earn_data = df_all[df_all["NextEarnings"].notna() & (df_all["NextEarnings"] != "")][
+        ["Ticker", "NextEarnings", "ConvexityScore", "RSI", "Price"]
+    ].copy()
+    if not earn_data.empty:
+        earn_data["EarningsDate"] = pd.to_datetime(earn_data["NextEarnings"], errors="coerce")
+        earn_data = earn_data.dropna(subset=["EarningsDate"]).sort_values("EarningsDate")
+        today_dt = pd.Timestamp.now().normalize()
+        earn_upcoming = earn_data[earn_data["EarningsDate"] >= today_dt - pd.Timedelta(days=1)]
+        if not earn_upcoming.empty:
+            fig_earn = go.Figure()
+            for _, erow in earn_upcoming.iterrows():
+                days_away = (erow["EarningsDate"] - today_dt).days
+                color = "#e74c3c" if days_away <= 7 else "#f39c12" if days_away <= 21 else "#3498db"
+                fig_earn.add_trace(go.Scatter(
+                    x=[erow["EarningsDate"]], y=[erow["Ticker"]],
+                    mode="markers+text", text=[f"  {days_away}d"],
+                    textposition="middle right", textfont=dict(size=11, color=color),
+                    marker=dict(size=14, color=color, symbol="diamond"),
+                    hovertemplate=(
+                        f"<b>{erow['Ticker']}</b><br>"
+                        f"Earnings: {erow['NextEarnings']}<br>"
+                        f"Days away: {days_away}<br>"
+                        f"Convexity: {erow['ConvexityScore']:.0f}<br>"
+                        f"RSI: {erow['RSI']:.0f}<extra></extra>"
+                    ),
+                    showlegend=False,
+                ))
+            fig_earn.add_vline(x=today_dt.isoformat(), line_dash="dash", line_color="#2ecc71")
+            fig_earn.add_annotation(x=today_dt.isoformat(), y=1, yref="paper",
+                                    text="Today", showarrow=False,
+                                    font=dict(color="#2ecc71", size=11))
+            fig_earn.update_layout(
+                height=max(200, len(earn_upcoming) * 35 + 60),
+                xaxis=dict(title="Date", gridcolor="#21262d"),
+                margin=dict(l=60, r=40, t=20, b=40), **DARK,
+            )
+            st.plotly_chart(fig_earn, use_container_width=True)
+            st.caption("Red = this week  |  Orange = next 3 weeks  |  Blue = later")
+        else:
+            st.info("No upcoming earnings dates found.")
+    else:
+        st.info("No earnings date data available.")
+
+    grad_divider()
+
+    # ── Analyst Targets, News & Sentiment ────────────────────────────────────
+    section_header("Analyst Targets, News & Sentiment", "#e74c3c")
 
     df_sig = df_all.copy()
-    df_sig = df_sig.merge(
-        df_extras[["Ticker","InsiderSignal","InsiderNet","EarningsBeats"]],
-        on="Ticker", how="left"
-    )
+
+    # ── Insider Activity (new) ──
+    st.markdown("#### Insider Activity")
+    st.caption("People sell for many reasons, but only buy for one. Recent insider purchases (last 90 days).")
+    _insider_buy_tickers = df_sig[df_sig["InsiderSignal"] == "Buying"]
+    if not _insider_buy_tickers.empty:
+        insider_rows = []
+        for _, irow in _insider_buy_tickers.iterrows():
+            buys_list = irow.get("InsiderBuys", [])
+            if isinstance(buys_list, list) and buys_list:
+                for b in buys_list:
+                    val = b.get("value", 0)
+                    insider_rows.append({
+                        "Ticker": irow["Ticker"],
+                        "Price": irow["Price"],
+                        "Insider": b.get("insider", "Unknown"),
+                        "Role": b.get("position", ""),
+                        "Date": b.get("date", ""),
+                        "Shares": f"{b.get('shares', 0):,}",
+                        "Value": f"${val:,.0f}" if val else "N/A",
+                    })
+            else:
+                insider_rows.append({
+                    "Ticker": irow["Ticker"],
+                    "Price": irow["Price"],
+                    "Insider": "—",
+                    "Role": "—",
+                    "Date": "—",
+                    "Shares": "—",
+                    "Value": "—",
+                })
+        if insider_rows:
+            df_insider_tbl = pd.DataFrame(insider_rows)
+            def _color_insider_val(val):
+                if val == "N/A" or val == "—":
+                    return ""
+                try:
+                    v = float(val.replace("$","").replace(",",""))
+                    if v >= 500_000: return "background-color: #1a3a2a; color: #2ecc71; font-weight: bold"
+                    if v >= 100_000: return "background-color: #1a3a2a; color: #2ecc71"
+                    return ""
+                except Exception:
+                    return ""
+            insider_styled = df_insider_tbl.style.map(_color_insider_val, subset=["Value"])
+            st.dataframe(insider_styled, width="stretch", hide_index=True)
+    else:
+        st.info("No insider purchases detected in the last 90 days across your watchlist.")
+    _insider_sell_tickers = df_sig[df_sig["InsiderSignal"] == "Selling"]["Ticker"].tolist()
+    if _insider_sell_tickers:
+        st.caption(f"Insider selling detected: {', '.join(_insider_sell_tickers)}")
+
+    grad_divider()
 
     # Analyst price targets chart
     st.markdown("#### Analyst Price Targets")
@@ -2435,32 +3602,7 @@ with tab_sig:
     else:
         st.info("No analyst price targets available.")
 
-    st.divider()
-
-    # News & insider signals
-    st.markdown("#### News & Insider Signals")
-    news_cols = st.columns(2)
-    tickers_list = df_sig.sort_values("AnalystUpside", ascending=False, na_position="last")["Ticker"].tolist()
-    for i, t in enumerate(tickers_list):
-        news_row = df_extras[df_extras["Ticker"] == t]
-        if news_row.empty:
-            continue
-        nr = news_row.iloc[0]
-        insider = nr.get("InsiderSignal","N/A")
-        beats   = nr.get("EarningsBeats") or "N/A"
-        headlines = nr.get("Headlines") or []
-        with news_cols[i % 2]:
-            with st.expander(f"{t}  |  Insider: {insider}  |  EPS beats: {beats}"):
-                if headlines:
-                    for h in headlines:
-                        if isinstance(h, dict):
-                            st.markdown(f"- **{h.get('date','')}** {h.get('title','')} _{h.get('pub','')}_")
-                        else:
-                            st.markdown(f"- {h}")
-                else:
-                    st.caption("No recent headlines found.")
-
-    st.divider()
+    grad_divider()
 
     # Full signal table
     st.markdown("#### Full Signal Table")
@@ -2528,10 +3670,19 @@ with tab_sig:
             return "background-color: #1a3a2a; color: #2ecc71"
         return ""
 
+    def _sig_color_insider(val):
+        v = str(val).lower()
+        if v == "buying":
+            return "background-color: #1a3a2a; color: #2ecc71; font-weight: bold"
+        if v == "selling":
+            return "background-color: #3a2c1a; color: #f39c12"
+        return ""
+
     sig_styled = (tbl.style
         .map(_sig_color_upside, subset=["Upside"])
         .map(_sig_color_short, subset=["Short%"])
         .map(_sig_color_rsi, subset=["RSI"])
+        .map(_sig_color_insider, subset=["Insider"])
         .format({
             "Price": "${:.2f}",
             "Beta": lambda x: f"{x:.2f}" if pd.notna(x) and x else "N/A",
@@ -2545,7 +3696,7 @@ with tab_sig:
             "ST Bulls": lambda x: f"{x:.0f}% bull" if pd.notna(x) and x else "N/A",
         }, na_rep="N/A")
     )
-    st.dataframe(sig_styled, use_container_width=True, hide_index=True)
+    st.dataframe(sig_styled, width="stretch", hide_index=True)
     st.download_button("Export Signals CSV", tbl.to_csv(index=False),
                        "signals_data.csv", "text/csv", key="dl_sig")
     st.caption(
@@ -2554,10 +3705,10 @@ with tab_sig:
     )
     st.caption("⚠️ Short interest data is typically 2 weeks stale (FINRA bi-monthly reporting).")
 
-# ── TAB: AI Summary ─────────────────────────────────────────────────────────
+    grad_divider()
 
-with tab_ai:
-    st.subheader("AI Summary — Claude-powered Investment Brief")
+    # ── AI Summary (merged from former AI Summary tab) ──
+    section_header("AI Summary — Claude-powered Investment Brief", "#9b59b6")
     st.caption(
         "Synthesizes technical data, analyst targets, insider activity, "
         "StockTwits sentiment, and recent news into a concise investment brief. "
@@ -2567,14 +3718,10 @@ with tab_ai:
     api_key = st.session_state.get("claude_key", "")
     if not api_key:
         st.warning(
-            "Add your Anthropic API key in the sidebar to use this tab.  \n"
+            "Add your Anthropic API key in the sidebar to use this feature.  \n"
             "Get one at **console.anthropic.com** — $5 free credit to start."
         )
     else:
-        with st.spinner("Loading news & sentiment for AI analysis..."):
-            df_extras_ai = fetch_extras(st.session_state.tickers)
-            st_data_ai   = fetch_stocktwits(st.session_state.tickers)
-
         col_single, col_all = st.columns([2, 1])
 
         with col_single:
@@ -2589,8 +3736,8 @@ with tab_ai:
         def build_summary(t):
             r  = df_price[df_price["Ticker"] == t].iloc[0]
             fd = df_fund[df_fund["Ticker"] == t].iloc[0].to_dict() if not df_fund[df_fund["Ticker"] == t].empty else {}
-            ex = df_extras_ai[df_extras_ai["Ticker"] == t].iloc[0] if not df_extras_ai[df_extras_ai["Ticker"] == t].empty else {}
-            sent = st_data_ai.get(t, {})
+            ex = df_extras[df_extras["Ticker"] == t].iloc[0] if not df_extras[df_extras["Ticker"] == t].empty else {}
+            sent = st_data.get(t, {})
             return claude_summarize(
                 ticker=t,
                 price=r["Price"], rsi=r["RSI"], atr_pct=r["ATR_pct"],
@@ -2613,10 +3760,225 @@ with tab_ai:
             st.caption(f"Generated {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} · model: claude-haiku-4-5-20251001")
 
         if run_all:
-            st.divider()
+            grad_divider()
             for t in df_price["Ticker"].tolist():
                 with st.spinner(f"Analyzing ${t}..."):
                     out = build_summary(t)
                 with st.expander(f"**${t}**", expanded=False):
                     st.markdown(out)
             st.caption(f"All analyses generated {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB 6 — Scanner
+# ══════════════════════════════════════════════════════════════════════════════
+with tab_scan:
+    section_header("Opportunity Scanner", "#e74c3c")
+    st.caption(
+        "Scan external universes for asymmetric small-cap opportunities. "
+        "Candidates are scored using the same Convexity, Momentum, and Relative Strength models."
+    )
+
+    # ── Filter controls ──
+    scan_c1, scan_c2, scan_c3, scan_c4 = st.columns(4)
+    with scan_c1:
+        scan_min_mcap = st.select_slider(
+            "Min Market Cap",
+            options=[50, 100, 200, 500, 1000],
+            value=200,
+            format_func=lambda x: f"${x}M",
+        )
+    with scan_c2:
+        scan_max_mcap = st.select_slider(
+            "Max Market Cap",
+            options=[1, 2, 5, 10, 20, 50],
+            value=10,
+            format_func=lambda x: f"${x}B",
+        )
+    with scan_c3:
+        scan_min_rev = st.slider("Min Rev Growth %", 0, 50, 10)
+    with scan_c4:
+        scan_sources = st.multiselect(
+            "Universe Sources",
+            ["Yahoo Screener", "Most Actives", "Small Cap Gainers",
+             "Aggressive Small Caps", "FINVIZ", "Yahoo Trending"],
+            default=["Yahoo Screener", "Small Cap Gainers"],
+        )
+
+    # Map source names to functions
+    SOURCE_MAP = {
+        "Yahoo Screener": ("custom", None),
+        "Most Actives": ("predefined", "most_actives"),
+        "Small Cap Gainers": ("predefined", "small_cap_gainers"),
+        "Aggressive Small Caps": ("predefined", "aggressive_small_caps"),
+        "FINVIZ": ("finviz", None),
+        "Yahoo Trending": ("trending", None),
+    }
+
+    run_scan = st.button("Run Scan", type="primary", use_container_width=True)
+
+    if run_scan:
+        with st.spinner("Sourcing universe from selected feeds..."):
+            universe = set()
+            source_counts = {}
+            for src in scan_sources:
+                kind, key = SOURCE_MAP[src]
+                if kind == "custom":
+                    ticks = scan_yahoo_screener(
+                        min_mcap=scan_min_mcap * 1_000_000,
+                        max_mcap=scan_max_mcap * 1_000_000_000,
+                        min_rev_growth=scan_min_rev / 100,
+                    )
+                elif kind == "predefined":
+                    ticks = scan_yahoo_predefined(key)
+                elif kind == "finviz":
+                    ticks = scan_finviz()
+                elif kind == "trending":
+                    ticks = scan_yahoo_trending()
+                else:
+                    ticks = []
+                source_counts[src] = len(ticks)
+                universe.update(ticks)
+
+            # Remove tickers already in portfolio
+            existing = set(st.session_state.get("tickers", []))
+            universe -= existing
+
+        # Show sourcing summary
+        src_parts = [f"{src}: {ct}" for src, ct in source_counts.items()]
+        alert_card(
+            f"Universe: {len(universe)} unique candidates "
+            f"({', '.join(src_parts)}). "
+            f"Excluded {len(existing)} existing portfolio tickers.",
+            color="blue",
+        )
+
+        if not universe:
+            st.warning("No candidates found. Try broadening your filters.")
+        else:
+            # Cap at 80 to keep scoring fast
+            universe_list = sorted(universe)[:80]
+            if len(universe) > 80:
+                st.caption(f"Capped at 80 candidates (from {len(universe)}) for performance.")
+
+            with st.spinner(f"Scoring {len(universe_list)} candidates — fetching data & computing scores..."):
+                spy_c, spy_r = fetch_spy_daily()
+                df_scan = score_scanner_candidates(universe_list, spy_c, spy_r)
+
+            if df_scan.empty:
+                st.warning("Could not fetch data for any candidates.")
+            else:
+                # Filter by minimum score
+                min_score = st.slider("Min Scan Score", 0, 80, 25, key="scan_min_score")
+                df_show = df_scan[df_scan["ScanScore"] >= min_score].copy()
+
+                st.markdown(f"**{len(df_show)}** candidates scoring >= {min_score}")
+
+                if not df_show.empty:
+                    # Format display table
+                    display_cols = ["Ticker", "Price", "MCap", "ScanScore", "Convexity",
+                                    "Momentum", "RS_Score", "RS_Label", "SetupStage",
+                                    "RSI", "Pos52", "vsMA50", "RevGrowth",
+                                    "ShortPct", "Beta", "AnalystUpside"]
+                    available_cols = [c for c in display_cols if c in df_show.columns]
+                    df_display = df_show[available_cols].copy()
+
+                    # Format market cap
+                    if "MCap" in df_display.columns:
+                        df_display["MCap"] = df_display["MCap"].apply(
+                            lambda x: fmt_mcap(x) if pd.notna(x) and x else "N/A"
+                        )
+
+                    def _color_scan_score(val):
+                        if pd.isna(val): return ""
+                        if val >= 55: return "background-color: #1a472a; color: #2ecc71"
+                        if val >= 40: return "background-color: #1a3a1a; color: #7dcea0"
+                        if val >= 25: return "background-color: #2d2a0d; color: #f39c12"
+                        return "background-color: #2d0d0d; color: #e74c3c"
+
+                    def _color_scan_stage(val):
+                        colors = {
+                            "Emerging": "background-color: #0d2818; color: #2ecc71",
+                            "Trending": "background-color: #0d1f2d; color: #3498db",
+                            "Basing": "background-color: #2d2a0d; color: #f39c12",
+                            "Neutral": "",
+                            "Extended": "background-color: #2d1a0d; color: #e67e22",
+                            "Breaking Down": "background-color: #2d0d0d; color: #e74c3c",
+                        }
+                        return colors.get(val, "")
+
+                    def _color_scan_rs(val):
+                        if val == "Leader": return "background-color: #0d2818; color: #2ecc71"
+                        if val == "Holding": return "background-color: #2d2a0d; color: #f39c12"
+                        if val == "Lagging": return "background-color: #2d0d0d; color: #e74c3c"
+                        return ""
+
+                    styled = df_display.style.map(
+                        _color_scan_score, subset=["ScanScore"]
+                    )
+                    if "SetupStage" in available_cols:
+                        styled = styled.map(_color_scan_stage, subset=["SetupStage"])
+                    if "RS_Label" in available_cols:
+                        styled = styled.map(_color_scan_rs, subset=["RS_Label"])
+
+                    fmt_dict = {
+                        "Price": "${:.2f}",
+                        "ScanScore": "{:.1f}",
+                        "Convexity": "{:.1f}",
+                        "Momentum": "{:.1f}",
+                        "RS_Score": lambda x: f"{x:.0f}" if pd.notna(x) else "—",
+                        "RSI": "{:.0f}",
+                        "Pos52": "{:.0f}%",
+                        "vsMA50": "{:+.1f}%",
+                        "RevGrowth": lambda x: f"{x:+.0f}%" if pd.notna(x) else "N/A",
+                        "ShortPct": lambda x: f"{x:.1f}%" if pd.notna(x) else "N/A",
+                        "Beta": lambda x: f"{x:.2f}" if pd.notna(x) else "N/A",
+                        "AnalystUpside": lambda x: f"{x:+.0f}%" if pd.notna(x) else "N/A",
+                    }
+                    active_fmt = {k: v for k, v in fmt_dict.items() if k in available_cols}
+                    styled = styled.format(active_fmt, na_rep="—")
+
+                    st.dataframe(styled, hide_index=True, use_container_width=True)
+
+                    # ── Add to Watchlist ──
+                    grad_divider()
+                    section_header("Add to Watchlist", "#2ecc71")
+                    add_c1, add_c2, add_c3 = st.columns([2, 2, 1])
+                    with add_c1:
+                        add_tickers = st.multiselect(
+                            "Select tickers to add",
+                            df_show["Ticker"].tolist(),
+                            key="scan_add_tickers",
+                        )
+                    with add_c2:
+                        wl_names = list(watchlists.keys())
+                        target_wl = st.selectbox(
+                            "Target watchlist",
+                            wl_names,
+                            key="scan_target_wl",
+                        )
+                    with add_c3:
+                        st.markdown("<br>", unsafe_allow_html=True)
+                        if st.button("Add Selected", key="scan_add_btn"):
+                            if add_tickers and target_wl:
+                                added = []
+                                for t in add_tickers:
+                                    if t not in watchlists[target_wl]:
+                                        watchlists[target_wl].append(t)
+                                        added.append(t)
+                                if added:
+                                    save_watchlists(watchlists)
+                                    st.success(f"Added {', '.join(added)} to '{target_wl}'")
+                                    st.rerun()
+                                else:
+                                    st.info("All selected tickers already in watchlist.")
+                            else:
+                                st.warning("Select tickers and a watchlist first.")
+
+                    # Export
+                    st.download_button(
+                        "Export Scanner Results CSV",
+                        df_show.to_csv(index=False),
+                        f"scanner_results_{datetime.now().strftime('%Y%m%d')}.csv",
+                        "text/csv",
+                        key="dl_scanner",
+                    )
