@@ -2010,7 +2010,7 @@ _expected_cols = {
     "ShortPct": None, "FCF_yield": None, "ROE": None, "Revenue_Growth": None,
     "Rule40": None, "FCFPositive": False, "RevGrowthPct": None,
     "InsiderPct": 0, "InstitPct": None, "DaysToCover": None,
-    "CashRunwayMonths": None, "PS_Current": None,
+    "CashRunwayMonths": None, "PS_Current": None, "PS_HistPos": None,
     # Extras
     "NextEarnings": None, "InsiderSignal": None, "InsiderNet": 0,
     "InsiderBuys": 0, "EarningsBeats": None, "Headlines": None,
