@@ -1831,7 +1831,8 @@ def calc_four_pillars(row, themes, spy_ret=None, etf_data=None, st_data=None):
             theme_etf_list = theme_etfs_map.get(th, [])
             etf_sub = etf_data[etf_data["Ticker"].isin(theme_etf_list)]
             if not etf_sub.empty and etf_sub["Ret3m"].notna().any():
-                etf_avg_3m = etf_sub["Ret3m"].dropna().mean()
+                _ret3m_vals = pd.to_numeric(etf_sub["Ret3m"], errors="coerce").dropna()
+                etf_avg_3m = float(_ret3m_vals.mean()) if len(_ret3m_vals) > 0 else 0
                 etf_rs = etf_avg_3m - spy_3m
                 if etf_rs > 0:
                     candidate = min(etf_rs / 30, 1.0) * 25
