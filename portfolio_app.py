@@ -2011,6 +2011,11 @@ _expected_cols = {
     "Rule40": None, "FCFPositive": False, "RevGrowthPct": None,
     "InsiderPct": 0, "InstitPct": None, "DaysToCover": None,
     "CashRunwayMonths": None, "PS_Current": None, "PS_HistPos": None,
+    "PS_3yr_Min": None, "PS_3yr_Max": None, "PS_3yr_Avg": None,
+    "EV_EBITDA": None, "GrossMargin": None, "FCFValue": None,
+    "PostMktChg": None, "PreMktChg": None,
+    "TargetLow": None, "TargetHigh": None, "TargetMean": None,
+    "RelVol": None,
     # Extras
     "NextEarnings": None, "InsiderSignal": None, "InsiderNet": 0,
     "InsiderBuys": 0, "EarningsBeats": None, "Headlines": None,
