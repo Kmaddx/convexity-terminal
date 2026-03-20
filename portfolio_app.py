@@ -357,19 +357,50 @@ THEME_RULES = {
     },
 }
 
-@st.cache_data(ttl=86400, show_spinner=False)  # cache 24h — industry/description don't change often
+META_CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "meta_cache.json")
+
+def _load_meta_cache():
+    try:
+        if os.path.exists(META_CACHE_FILE):
+            with open(META_CACHE_FILE) as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {}
+
+def _save_meta_cache(cache):
+    try:
+        with open(META_CACHE_FILE, "w") as f:
+            json.dump(cache, f)
+    except Exception:
+        pass
+
+_META_DISK_CACHE = _load_meta_cache()
+
+@st.cache_data(ttl=86400, show_spinner=False)
 def _fetch_ticker_metadata(ticker):
-    """Fetch industry, description, and name for theme auto-assignment."""
+    """Fetch industry, description, and name for theme auto-assignment.
+    Falls back to disk cache when rate-limited."""
     try:
         info = yf.Ticker(ticker).info
-        return {
-            "industry": (info.get("industry") or "").lower(),
-            "sector": (info.get("sector") or "").lower(),
-            "desc": (info.get("longBusinessSummary") or "").lower(),
-            "name": (info.get("shortName") or info.get("longName") or "").lower(),
-        }
+        # Check if we got real data
+        if info and any(info.get(k) for k in ["industry", "sector", "longBusinessSummary"]):
+            result = {
+                "industry": (info.get("industry") or "").lower(),
+                "sector": (info.get("sector") or "").lower(),
+                "desc": (info.get("longBusinessSummary") or "").lower(),
+                "name": (info.get("shortName") or info.get("longName") or "").lower(),
+            }
+            # Update disk cache
+            _META_DISK_CACHE[ticker] = result
+            _save_meta_cache(_META_DISK_CACHE)
+            return result
     except Exception:
-        return {"industry": "", "sector": "", "desc": "", "name": ""}
+        pass
+    # Fallback to disk cache
+    if ticker in _META_DISK_CACHE:
+        return _META_DISK_CACHE[ticker]
+    return {"industry": "", "sector": "", "desc": "", "name": ""}
 
 def auto_assign_themes(ticker, metadata=None):
     """Auto-assign a ticker to themes based on industry + business description + company name.
