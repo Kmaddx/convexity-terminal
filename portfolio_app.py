@@ -2001,17 +2001,31 @@ df_all["PillarAligned"] = _pillar_results.apply(lambda d: d["aligned"])
 
 # ── Ensure all expected columns exist (graceful fallback when APIs fail) ──
 _expected_cols = {
+    # Price data
+    "Price": None, "Chg": None, "Pos52": None, "Ret1m": None, "Ret3m": None,
+    "Spark30": None, "RSI": None, "ATR_pct": None, "Beta": None,
+    "vsMA50": None, "vsMA200": None,
+    # Fundamental data
+    "NumAnalysts": 0, "Consensus": None, "Upside": None, "AnalystUpside": None,
+    "ShortPct": None, "FCF_yield": None, "ROE": None, "Revenue_Growth": None,
+    "Rule40": None, "FCFPositive": False, "RevGrowthPct": None,
+    "InsiderPct": 0, "InstitPct": None, "DaysToCover": None,
+    "CashRunwayMonths": None, "PS_Current": None,
+    # Extras
     "NextEarnings": None, "InsiderSignal": None, "InsiderNet": 0,
-    "InsiderBuys": 0, "InsiderPct": 0, "EarningsBeats": None,
-    "NumAnalysts": 0, "Consensus": None, "Upside": None,
-    "ShortPct": None, "Beta": None, "ATR_pct": None, "RSI": None,
-    "FCF_yield": None, "ROE": None, "Revenue_Growth": None, "Rule40": None,
-    "Ret1m": None, "Ret3m": None, "Spark30": None,
+    "InsiderBuys": 0, "EarningsBeats": None, "Headlines": None,
+    # Sentiment
     "ST_BullPct": None, "ST_MsgCount": 0,
+    # Relative strength
     "RS_Score": None, "RS_Rank": None, "RS_Label": None,
     "DownDayRS": None, "DownDayWinRate": None, "RecentDDExcess": None,
     "EarlyBottom": None, "DaysSinceLow": None, "RS_1m": None, "RS_3m": None,
-    "Pos52": None, "Chg": None, "Price": None,
+    # Scores (in case scoring fails)
+    "ConvexityScore": 0, "MomentumScore": 0, "AsymmetryScore": 0, "VGScore": 0,
+    "SetupStage": "Unknown", "PillarTech": 0, "PillarFund": 0,
+    "PillarTheme": 0, "PillarNarr": 0, "PillarAligned": False,
+    # Theme
+    "Theme": None,
 }
 for _col, _default in _expected_cols.items():
     if _col not in df_all.columns:
