@@ -395,6 +395,22 @@ def _get_fmp_key():
     except Exception:
         return ""
 
+def _get_anthropic_key():
+    """Get Anthropic API key from .env file or Streamlit secrets."""
+    env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+    if os.path.exists(env_path):
+        try:
+            with open(env_path) as f:
+                for line in f:
+                    if line.startswith("ANTHROPIC_API_KEY="):
+                        return line.strip().split("=", 1)[1]
+        except Exception:
+            pass
+    try:
+        return st.secrets.get("ANTHROPIC_API_KEY", "")
+    except Exception:
+        return ""
+
 @st.cache_data(ttl=86400, show_spinner=False)
 def _fetch_ticker_metadata(ticker):
     """Fetch industry, description, and name for theme auto-assignment.
@@ -2017,7 +2033,7 @@ Be direct. No filler. Base everything on the data provided."""
                 "content-type": "application/json",
             },
             json={
-                "model": "claude-haiku-4-5-20251001",
+                "model": "claude-haiku-4-5",
                 "max_tokens": 600,
                 "messages": [{"role": "user", "content": prompt}],
             },
@@ -4088,11 +4104,12 @@ with tab_sig:
         "Add your Anthropic API key in the sidebar (~$0.001 per ticker)."
     )
 
-    api_key = st.session_state.get("claude_key", "")
+    api_key = _get_anthropic_key()
     if not api_key:
         st.warning(
-            "Add your Anthropic API key in the sidebar to use this feature.  \n"
-            "Get one at **console.anthropic.com** — $5 free credit to start."
+            "Anthropic API key not found.  \n"
+            "Add `ANTHROPIC_API_KEY` to your `.env` file locally or Streamlit Cloud secrets.  \n"
+            "Get one at **console.anthropic.com**."
         )
     else:
         col_single, col_all = st.columns([2, 1])
@@ -4130,7 +4147,7 @@ with tab_sig:
             with st.spinner(f"Generating brief for ${selected_ticker}..."):
                 result = build_summary(selected_ticker)
             st.markdown(result)
-            st.caption(f"Generated {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} · model: claude-haiku-4-5-20251001")
+            st.caption(f"Generated {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} · model: claude-haiku-4-5")
 
         if run_all:
             grad_divider()
