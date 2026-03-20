@@ -1471,27 +1471,70 @@ def calc_four_pillars(row, themes, spy_ret=None, etf_data=None, st_data=None):
         tech += 10
 
     # ── Fundamental (0-100) ──
+    # Designed for small-cap/micro-cap growth companies where FCF is often negative
+    # and Rule of 40 is rarely achieved. A decent growth stock should score ~45-55.
     fund = 0.0
-    # Revenue growth > 0: up to 30 pts (scaled, cap at 60% growth)
+
+    # Baseline: 10 pts — the company exists and has financials
+    fund += 10
+
+    # Revenue growth: up to 25 pts (the key metric for growth-stage companies)
     rev_g = _safe(row.get("RevGrowthPct"), 0)
-    if rev_g > 0:
-        fund += min(rev_g / 60, 1.0) * 30
-    # Analyst upside > 0: up to 15 pts (reduced — analysts often wrong on growth stocks)
+    if rev_g > 30:
+        fund += 25
+    elif rev_g > 15:
+        fund += 15 + (rev_g - 15) / 15 * 10
+    elif rev_g > 0:
+        fund += rev_g / 15 * 15
+    else:
+        fund += 3  # negative growth isn't great but isn't the only metric
+
+    # Gross margin > 40%: up to 12 pts — shows business quality
+    gm = _safe(row.get("GrossMargin"), 0)
+    if gm > 60:
+        fund += 12
+    elif gm > 40:
+        fund += 6 + (gm - 40) / 20 * 6
+    elif gm > 20:
+        fund += (gm - 20) / 20 * 6
+    else:
+        fund += 2  # hardware/manufacturing companies have low margins, not penalized harshly
+
+    # FCF: 15 pts positive, 5 pts baseline if negative (most growth companies are pre-profit)
+    if row.get("FCFPositive"):
+        fund += 15
+    else:
+        fund += 5  # pre-profit growth is normal, not a failure
+
+    # Analyst upside > 0: up to 10 pts (reduced — analysts often wrong on growth stocks)
     upside = _safe(row.get("AnalystUpside"), 0)
     num_analysts = int(_safe(row.get("NumAnalysts"), 0))
     analyst_conf = 0.0 if num_analysts == 0 else min(1.0, 0.4 + 0.2 * num_analysts)
     if upside > 0:
-        fund += min(upside / 100, 1.0) * 15 * analyst_conf
-    # FCF positive: 25 pts (hard data, not opinion)
-    if row.get("FCFPositive"):
-        fund += 25
-    # Rule of 40 > 40: up to 20 pts (hard data)
+        fund += min(upside / 80, 1.0) * 10 * analyst_conf
+    elif num_analysts == 0:
+        fund += 3  # uncovered — not penalized
+
+    # Rule of 40: up to 12 pts (bonus for companies that achieve it)
     rule40 = _safe(row.get("Rule40"), 0)
     if rule40 > 40:
-        fund += min((rule40 - 40) / 40, 1.0) * 20
+        fund += 12
     elif rule40 > 20:
-        fund += (rule40 - 20) / 20 * 10
-    # (Insider buying moved to Narrative pillar — it's a catalyst signal, not fundamental)
+        fund += (rule40 - 20) / 20 * 8
+    elif rule40 > 0:
+        fund += 3
+
+    # P/S valuation positioning: up to 8 pts — trading below historical avg is attractive
+    ps_pos = _safe(row.get("PS_HistPos"))
+    if ps_pos is not None:
+        if ps_pos <= 25:
+            fund += 8  # historically cheap
+        elif ps_pos <= 50:
+            fund += 5  # below average
+        elif ps_pos <= 75:
+            fund += 2  # above average
+    else:
+        fund += 3  # no data, neutral
 
     # ── Thematic (0-100) ──
     thematic = 0.0
@@ -1591,8 +1634,9 @@ def calc_four_pillars(row, themes, spy_ret=None, etf_data=None, st_data=None):
     ticker_themes = get_ticker_themes(themes, ticker)
     if ticker_themes and etf_data is not None and not etf_data.empty:
         theme_etf_rets = []
+        _themes_inner = themes.get("themes", {}) if isinstance(themes, dict) else {}
         for th_name in ticker_themes:
-            th_entry = themes.get(th_name, {})
+            th_entry = _themes_inner.get(th_name, {})
             for etf_t in th_entry.get("etfs", []):
                 etf_row = etf_data[etf_data["Ticker"] == etf_t]
                 if not etf_row.empty:
