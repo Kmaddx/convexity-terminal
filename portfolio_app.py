@@ -2213,9 +2213,23 @@ if len(_fetched) == 0:
     )
     st.stop()
 
+# Data quality check — detect when fundamentals didn't load (rate-limited)
+_fund_cols_check = ["RevGrowthPct", "GrossMargin", "Beta"]
+_has_fund_data = any(
+    df_all[col].notna().any() and (df_all[col] != 0).any()
+    for col in _fund_cols_check if col in df_all.columns
+)
+_data_quality = "Full" if _has_fund_data else "Limited"
+
 st.title("◣ Convexity Terminal")
 _data_ts = datetime.now().strftime('%Y-%m-%d %H:%M')
 st.caption(f"As of {_data_ts}  |  **{st.session_state.active_watchlist}**  |  {len(df_price)} tickers")
+if not _has_fund_data:
+    st.warning(
+        "⚠️ **Limited data** — Yahoo Finance rate-limited fundamental data. "
+        "Pillar scores may be uniform. Run locally for full analysis: "
+        "`git clone https://github.com/Kmaddx/convexity-terminal && streamlit run portfolio_app.py`"
+    )
 
 # ── Watchlist Health Score ────────────────────────────────────────────────
 n_total = len(df_all)
