@@ -27,9 +27,15 @@ st.markdown("""
     /* ── Hide Streamlit chrome (keep sidebar toggle only) ── */
     #MainMenu, footer { visibility: hidden; }
     div[data-testid="stDecoration"] { display: none; }
-    /* Hide Streamlit Cloud toolbar (share/star/edit/deploy) */
-    div[data-testid="stToolbar"] { display: none !important; }
-    .stAppToolbar { display: none !important; }
+    /* Hide Streamlit Cloud toolbar (share/star/edit/deploy) — desktop only */
+    @media (min-width: 768px) {
+        div[data-testid="stToolbar"] { display: none !important; }
+        .stAppToolbar { display: none !important; }
+    }
+    /* On mobile, hide only the cloud buttons, keep sidebar toggle */
+    @media (max-width: 767px) {
+        button[data-testid="baseButton-headerNoPadding"] { display: none !important; }
+    }
     /* Minimal header — just the sidebar toggle, no background */
     header[data-testid="stHeader"] {
         background: transparent !important;
