@@ -927,10 +927,61 @@ with tab_dash:
     # ══════════════════════════════════════════════════════════════════════════
     section_header("Market Conditions", "#58a6ff")
 
-    # AI Market Summary
+    # AI Market Summary — styled to match app aesthetic
     if _market_ai_summary:
-        with st.container(border=True):
-            st.markdown(_market_ai_summary)
+        import re as _re
+        _summary_text = _market_ai_summary.strip()
+        # Parse sections from the AI output
+        _sections = {}
+        _current_key = None
+        _current_lines = []
+        for _line in _summary_text.split("\n"):
+            _stripped = _line.strip()
+            # Detect section headers (e.g. "**MARKET READ**", "## MARKET READ", "1. **KEY CATALYSTS**")
+            _header_match = _re.match(
+                r'^(?:#+ *|\d+\.\s*)?(?:\*\*)?([A-Z][A-Z &/\-]+?)(?:\*\*)?:?\s*$', _stripped)
+            if _header_match:
+                if _current_key:
+                    _sections[_current_key] = "\n".join(_current_lines).strip()
+                _current_key = _header_match.group(1).strip()
+                _current_lines = []
+            elif _current_key is not None:
+                _current_lines.append(_line)
+            else:
+                # Content before any header — treat as market read
+                _current_lines.append(_line)
+        if _current_key:
+            _sections[_current_key] = "\n".join(_current_lines).strip()
+        elif _current_lines:
+            _sections["MARKET READ"] = "\n".join(_current_lines).strip()
+
+        # Render styled HTML
+        _section_icons = {
+            "MARKET READ": "\U0001f4ca", "KEY CATALYSTS THIS WEEK": "\U0001f4c5",
+            "KEY CATALYSTS": "\U0001f4c5", "WATCH FOR": "\u26a0\ufe0f",
+        }
+        _ai_html = (
+            '<div style="background:#0d1117;border:1px solid #30363d;border-radius:10px;'
+            'padding:16px 20px;margin-bottom:12px;">'
+            '<div style="font-size:0.65rem;color:#8b949e;text-transform:uppercase;'
+            'letter-spacing:1px;margin-bottom:10px;">AI Market Intelligence</div>'
+        )
+        for _sname, _sbody in _sections.items():
+            _icon = _section_icons.get(_sname, "\U0001f4cc")
+            # Convert markdown bold to HTML bold and list items
+            _body_html = _sbody.replace("**", "<b>", 1)
+            while "**" in _body_html:
+                _body_html = _body_html.replace("**", "</b>", 1).replace("**", "<b>", 1)
+            _body_html = _body_html.replace("\n", "<br>")
+            _ai_html += (
+                f'<div style="margin-bottom:12px;">'
+                f'<div style="font-size:0.75rem;font-weight:600;color:#58a6ff;'
+                f'margin-bottom:4px;">{_icon} {_sname}</div>'
+                f'<div style="font-size:0.8rem;color:#c9d1d9;line-height:1.5;">'
+                f'{_body_html}</div></div>'
+            )
+        _ai_html += '</div>'
+        st.markdown(_ai_html, unsafe_allow_html=True)
 
     # Decision badge + total score
     _env_colors = {"OPPORTUNITY": "#2ecc71", "SELECTIVE": "#f39c12", "DEFENSIVE": "#e74c3c"}
