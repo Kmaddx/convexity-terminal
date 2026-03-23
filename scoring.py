@@ -78,7 +78,7 @@ def calc_setup_stage(row):
 
 # ── Four Pillars (the single scoring spine) ──────────────────────────────────
 
-def calc_four_pillars(row, themes, spy_ret=None, etf_data=None, st_data=None):
+def calc_four_pillars(row, themes, spy_ret=None, etf_data=None, st_data=None, ai_sentiment=None):
     """Score each of the 4 pillars 0-100. Returns dict with scores + alignment.
 
     The four pillars absorb ALL sub-scores:
@@ -278,21 +278,29 @@ def calc_four_pillars(row, themes, spy_ret=None, etf_data=None, st_data=None):
     # Baseline: 15 pts — you picked this stock for a reason, it has a thesis
     narr += 15
 
-    # Social sentiment (StockTwits): up to 15 pts
+    # Social sentiment (StockTwits): up to 10 pts
     _st_sentiment = (st_data or {}).get(ticker, {})
     bull_pct = _st_sentiment.get("bull_pct")
     msg_count = _st_sentiment.get("msg_count", 0)
     if bull_pct is not None:
         if bull_pct >= 60:
-            narr += 8 + min((bull_pct - 60) / 30, 1.0) * 7
+            narr += 5 + min((bull_pct - 60) / 30, 1.0) * 5
         elif bull_pct < 40:
-            narr += 5  # contrarian — extreme bearishness can mean opportunity
+            narr += 3  # contrarian — extreme bearishness can mean opportunity
         else:
-            narr += 7  # neutral sentiment, not a red flag
+            narr += 5  # neutral sentiment, not a red flag
         if msg_count >= 10:
-            narr += min(msg_count / 25, 1.0) * 3
+            narr += min(msg_count / 25, 1.0) * 2
     else:
-        narr += 7  # no data = neutral, not penalized
+        narr += 5  # no data = neutral, not penalized
+
+    # AI headline sentiment: up to 10 pts (from Claude analysis of recent news)
+    _ai_score = _safe(row.get("AI_HeadlineScore"))
+    if _ai_score is not None and _ai_score != 0:
+        # Score range: -1 to +1 → mapped to 0-10 pts (5 = neutral)
+        narr += round(5 + _ai_score * 5, 1)
+    else:
+        narr += 5  # no AI data or neutral = baseline
 
     # Insider buying: 15 pts — strongest conviction signal (recent purchases)
     insider_sig = str(row.get("InsiderSignal", "")).lower()
@@ -493,6 +501,95 @@ def calc_market_env_score(env):
     macro_score = max(0, min(100, macro_score))
     pillars["Macro"] = {"score": round(macro_score), "weight": 15}
 
+    # ── Warning flags (signs of a terrible market) ──
+    warnings = []
+
+    # Lower highs + lower lows = downtrend structure
+    if env.get("lower_highs") and env.get("lower_lows"):
+        warnings.append("Lower highs AND lower lows — downtrend structure")
+        pillars["Trend"]["score"] = max(pillars["Trend"]["score"] - 10, 0)
+    elif env.get("lower_highs"):
+        warnings.append("Lower highs — resistance dropping")
+
+    # Distribution days (institutional selling)
+    dist_days = env.get("distribution_days", 0)
+    if dist_days >= 6:
+        warnings.append(f"Heavy distribution — {dist_days} sell-offs on high volume (25d)")
+        pillars["Momentum"]["score"] = max(pillars["Momentum"]["score"] - 15, 0)
+    elif dist_days >= 5:
+        warnings.append(f"Increasing selling pressure — {dist_days} distribution days (25d)")
+        pillars["Momentum"]["score"] = max(pillars["Momentum"]["score"] - 8, 0)
+
+    # Rallies on low volume
+    if env.get("low_vol_rallies"):
+        ratio = env.get("up_down_vol_ratio", 0)
+        warnings.append(f"Rallies on low volume — up/down vol ratio: {ratio:.2f}x")
+        pillars["Momentum"]["score"] = max(pillars["Momentum"]["score"] - 8, 0)
+
+    # Good opens, weak closes (fading)
+    fade_days = env.get("fade_days_10d", 0)
+    if fade_days >= 5:
+        warnings.append(f"Weak closes — {fade_days}/10 sessions opened up but closed below open")
+        pillars["Trend"]["score"] = max(pillars["Trend"]["score"] - 8, 0)
+
+    # Extreme volatility
+    if vix > 30:
+        warnings.append(f"Extreme volatility — VIX at {vix:.0f}")
+    elif vix > 25 and vix_rising:
+        warnings.append(f"Volatility spiking — VIX at {vix:.0f} and rising")
+
+    # Narrow breadth
+    if above_50d <= 3:
+        warnings.append(f"Narrow breadth — only {above_50d}/11 sectors above 50d MA")
+    elif above_50d <= 5 and pos_1d <= 3:
+        warnings.append(f"Breadth deteriorating — {above_50d}/11 above 50d, only {pos_1d}/11 positive today")
+
+    # Below key MAs
+    below_mas = []
+    if spx_200 is not None and spx_200 < 0:
+        below_mas.append("200d")
+    if spx_50 < 0:
+        below_mas.append("50d")
+    if spx_20 < 0:
+        below_mas.append("20d")
+    if len(below_mas) >= 2:
+        warnings.append(f"SPX below key MAs: {', '.join(below_mas)}")
+
+    # ── Tailwinds (positive signals) ──
+    tailwinds = []
+
+    if env.get("lower_highs") is False and env.get("lower_lows") is False:
+        tailwinds.append("Higher highs AND higher lows — uptrend structure intact")
+
+    if dist_days <= 1:
+        tailwinds.append("Minimal distribution — institutions not selling")
+
+    if env.get("up_down_vol_ratio") and env.get("up_down_vol_ratio", 0) >= 1.3:
+        ratio = env["up_down_vol_ratio"]
+        tailwinds.append(f"Strong volume on up days — up/down vol ratio: {ratio:.2f}x")
+
+    fade_days = env.get("fade_days_10d", 0)
+    if fade_days <= 2:
+        tailwinds.append("Strong closes — buyers holding into the bell")
+
+    if vix <= 15:
+        tailwinds.append(f"Low volatility — VIX at {vix:.0f}, risk appetite healthy")
+    elif vix <= 20 and not vix_rising:
+        tailwinds.append(f"Contained volatility — VIX at {vix:.0f} and stable")
+
+    if above_50d >= 9:
+        tailwinds.append(f"Broad participation — {above_50d}/11 sectors above 50d MA")
+
+    above_mas = []
+    if spx_200 is not None and spx_200 > 0:
+        above_mas.append("200d")
+    if spx_50 > 0:
+        above_mas.append("50d")
+    if spx_20 > 0:
+        above_mas.append("20d")
+    if len(above_mas) >= 3:
+        tailwinds.append(f"SPX above all key MAs: {', '.join(above_mas)}")
+
     # ── Weighted total ──
     total_weight = sum(p["weight"] for p in pillars.values())
     total = sum(p["score"] * p["weight"] for p in pillars.values()) / total_weight
@@ -508,7 +605,7 @@ def calc_market_env_score(env):
         decision = "DEFENSIVE"
         decision_sub = "Preserve capital — wait for better entries"
 
-    return total, pillars, decision, decision_sub
+    return total, pillars, decision, decision_sub, warnings, tailwinds
 
 
 # ── Execution Window ─────────────────────────────────────────────────────────

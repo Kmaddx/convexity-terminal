@@ -54,9 +54,19 @@ def _save_fund_cache(data_by_ticker):
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_price_data(tickers):
     results = []
-    for t in tickers:
+    ticker_list = list(tickers)
+    # Batch download all tickers at once (much faster than sequential)
+    try:
+        raw = yf.download(ticker_list, period="1y", interval="1d",
+                          progress=False, auto_adjust=True, group_by="ticker", threads=True)
+    except Exception:
+        raw = pd.DataFrame()
+    for t in ticker_list:
         try:
-            df = yf.download(t, period="1y", interval="1d", progress=False, auto_adjust=True)
+            if len(ticker_list) == 1:
+                df = raw
+            else:
+                df = raw[t].dropna(how="all") if t in raw.columns.get_level_values(0) else pd.DataFrame()
             if df.empty or len(df) < 50:
                 continue
             close = df["Close"].squeeze()
@@ -136,8 +146,20 @@ def fetch_market_environment():
     """Fetch market-wide data for environment scoring."""
     env = {}
     try:
+        # Batch download indices (1 call instead of 5)
+        idx_syms = ["^VIX", "^GSPC", "QQQ", "^TNX", "DX-Y.NYB"]
+        idx_raw = yf.download(idx_syms, period="1y", interval="1d",
+                              progress=False, auto_adjust=True, group_by="ticker", threads=True)
+
+        def _get_idx(sym):
+            try:
+                d = idx_raw[sym].dropna(how="all")
+                return d if not d.empty else pd.DataFrame()
+            except Exception:
+                return pd.DataFrame()
+
         # VIX
-        vix_df = yf.download("^VIX", period="1y", interval="1d", progress=False, auto_adjust=True)
+        vix_df = _get_idx("^VIX")
         if not vix_df.empty:
             vix_close = vix_df["Close"].squeeze()
             env["vix_level"] = round(float(vix_close.iloc[-1]), 2)
@@ -148,7 +170,7 @@ def fetch_market_environment():
             env["vix_rising"] = bool(vix_close.iloc[-1] > vix_close.iloc[-5])
 
         # SPX
-        spx_df = yf.download("^GSPC", period="1y", interval="1d", progress=False, auto_adjust=True)
+        spx_df = _get_idx("^GSPC")
         if not spx_df.empty:
             spx = spx_df["Close"].squeeze()
             env["spx_price"] = round(float(spx.iloc[-1]), 2)
@@ -157,19 +179,23 @@ def fetch_market_environment():
             env["spx_vs_200d"] = round(float((spx.iloc[-1] / spx.rolling(200).mean().iloc[-1] - 1) * 100), 2) if len(spx) >= 200 else None
 
         # QQQ
-        qqq_df = yf.download("QQQ", period="1y", interval="1d", progress=False, auto_adjust=True)
+        qqq_df = _get_idx("QQQ")
         if not qqq_df.empty:
             qqq = qqq_df["Close"].squeeze()
             env["qqq_price"] = round(float(qqq.iloc[-1]), 2)
             env["qqq_vs_50d"] = round(float((qqq.iloc[-1] / qqq.rolling(50).mean().iloc[-1] - 1) * 100), 2)
             env["qqq_ret_1m"] = round(float((qqq.iloc[-1] / qqq.iloc[-22] - 1) * 100), 1) if len(qqq) >= 22 else None
 
-        # Sector ETFs
+        # Batch download sector ETFs (1 call instead of 11)
         sector_data = {}
-        for etf in SECTOR_ETFS:
-            try:
-                s_df = yf.download(etf, period="3mo", interval="1d", progress=False, auto_adjust=True)
-                if not s_df.empty:
+        try:
+            sec_raw = yf.download(SECTOR_ETFS, period="3mo", interval="1d",
+                                  progress=False, auto_adjust=True, group_by="ticker", threads=True)
+            for etf in SECTOR_ETFS:
+                try:
+                    s_df = sec_raw[etf].dropna(how="all") if etf in sec_raw.columns.get_level_values(0) else pd.DataFrame()
+                    if s_df.empty:
+                        continue
                     s_close = s_df["Close"].squeeze()
                     ma50 = s_close.rolling(50).mean().iloc[-1]
                     ret_1d = round(float((s_close.iloc[-1] / s_close.iloc[-2] - 1) * 100), 2) if len(s_close) >= 2 else 0
@@ -179,24 +205,78 @@ def fetch_market_environment():
                         "ret_1d": ret_1d, "ret_5d": ret_5d,
                         "above_50d": above_50, "price": round(float(s_close.iloc[-1]), 2),
                     }
-            except Exception:
-                pass
+                except Exception:
+                    pass
+        except Exception:
+            pass
         env["sectors"] = sector_data
         env["sectors_above_50d"] = sum(1 for s in sector_data.values() if s["above_50d"])
         env["sectors_positive_1d"] = sum(1 for s in sector_data.values() if s["ret_1d"] > 0)
         env["sector_leader"] = max(sector_data.items(), key=lambda x: x[1]["ret_5d"])[0] if sector_data else None
         env["sector_laggard"] = min(sector_data.items(), key=lambda x: x[1]["ret_5d"])[0] if sector_data else None
 
-        # 10Y yield
-        tnx_df = yf.download("^TNX", period="6mo", interval="1d", progress=False, auto_adjust=True)
+        # ── Warning signals (signs of a terrible market) ──
+        if not spx_df.empty:
+            spx_close = spx_df["Close"].squeeze()
+            spx_high = spx_df["High"].squeeze()
+            spx_low = spx_df["Low"].squeeze()
+            spx_open = spx_df["Open"].squeeze()
+            spx_vol = spx_df["Volume"].squeeze()
+
+            # Lower highs and lower lows (compare 5d rolling peaks/troughs)
+            if len(spx_high) >= 40:
+                recent_high = spx_high.iloc[-20:].max()
+                prior_high = spx_high.iloc[-40:-20].max()
+                recent_low = spx_low.iloc[-20:].min()
+                prior_low = spx_low.iloc[-40:-20].min()
+                env["lower_highs"] = bool(recent_high < prior_high)
+                env["lower_lows"] = bool(recent_low < prior_low)
+
+            # Rallies on low volume (up-day vol vs down-day vol, last 20 days)
+            if len(spx_close) >= 21:
+                last20_ret = spx_close.iloc[-20:].pct_change().dropna()
+                last20_vol = spx_vol.iloc[-20:].iloc[1:]  # align with returns
+                up_mask = last20_ret > 0
+                down_mask = last20_ret < 0
+                avg_up_vol = last20_vol[up_mask].mean() if up_mask.any() else 0
+                avg_down_vol = last20_vol[down_mask].mean() if down_mask.any() else 0
+                env["up_down_vol_ratio"] = round(float(avg_up_vol / avg_down_vol), 2) if avg_down_vol > 0 else None
+                env["low_vol_rallies"] = bool(avg_up_vol < avg_down_vol) if avg_down_vol > 0 else False
+
+            # Good opens, weak closes (intraday fade: open above prior close, close below open)
+            if len(spx_close) >= 11:
+                last10_open = spx_open.iloc[-10:]
+                last10_close = spx_close.iloc[-10:]
+                prev_close = spx_close.iloc[-11:-1].values
+                fade_days = sum(
+                    1 for o, c, pc in zip(last10_open, last10_close, prev_close)
+                    if float(o) > float(pc) and float(c) < float(o)
+                )
+                env["fade_days_10d"] = int(fade_days)
+                env["weak_closes"] = bool(fade_days >= 5)
+
+            # Distribution days (down >0.2% on above-average volume, last 25 sessions)
+            if len(spx_close) >= 50:
+                avg_vol_50 = spx_vol.iloc[-50:].mean()
+                last25_ret = spx_close.iloc[-25:].pct_change().dropna()
+                last25_vol = spx_vol.iloc[-25:].iloc[1:]
+                dist_days = sum(
+                    1 for r, v in zip(last25_ret, last25_vol)
+                    if float(r) < -0.002 and float(v) > float(avg_vol_50)
+                )
+                env["distribution_days"] = int(dist_days)
+                env["high_distribution"] = bool(dist_days >= 5)
+
+        # 10Y yield (already batch-downloaded)
+        tnx_df = _get_idx("^TNX")
         if not tnx_df.empty:
             tnx = tnx_df["Close"].squeeze()
             env["tnx_yield"] = round(float(tnx.iloc[-1]), 2)
             env["tnx_vs_20d"] = round(float((tnx.iloc[-1] / tnx.rolling(20).mean().iloc[-1] - 1) * 100), 2)
             env["tnx_rising"] = bool(tnx.iloc[-1] > tnx.iloc[-5])
 
-        # DXY
-        dxy_df = yf.download("DX-Y.NYB", period="6mo", interval="1d", progress=False, auto_adjust=True)
+        # DXY (already batch-downloaded)
+        dxy_df = _get_idx("DX-Y.NYB")
         if not dxy_df.empty:
             dxy = dxy_df["Close"].squeeze()
             env["dxy_level"] = round(float(dxy.iloc[-1]), 2)
@@ -225,10 +305,21 @@ def calc_downday_rs(tickers, spy_close, spy_daily_ret):
     recent_cutoff_1m = spy_daily_ret.index[-22] if len(spy_daily_ret) >= 22 else spy_daily_ret.index[0]
     recent_down_days = [d for d in down_days if d >= recent_cutoff_1m]
 
+    # Batch download all tickers at once
+    ticker_list = list(tickers)
+    try:
+        raw = yf.download(ticker_list, period="1y", interval="1d",
+                          progress=False, auto_adjust=True, group_by="ticker", threads=True)
+    except Exception:
+        raw = pd.DataFrame()
+
     results = []
-    for t in tickers:
+    for t in ticker_list:
         try:
-            df = yf.download(t, period="1y", interval="1d", progress=False, auto_adjust=True)
+            if len(ticker_list) == 1:
+                df = raw
+            else:
+                df = raw[t].dropna(how="all") if t in raw.columns.get_level_values(0) else pd.DataFrame()
             if df.empty or len(df) < 50:
                 continue
             close = df["Close"].squeeze()
@@ -308,9 +399,21 @@ def calc_downday_rs(tickers, spy_close, spy_daily_ret):
 def fetch_etf_benchmark_data(etf_tickers):
     """Fetch 1-year price data for ETF benchmarks."""
     results = []
-    for t in etf_tickers:
+    ticker_list = list(etf_tickers)
+    if not ticker_list:
+        return pd.DataFrame()
+    # Batch download all ETFs at once
+    try:
+        raw = yf.download(ticker_list, period="1y", interval="1d",
+                          progress=False, auto_adjust=True, group_by="ticker", threads=True)
+    except Exception:
+        raw = pd.DataFrame()
+    for t in ticker_list:
         try:
-            df = yf.download(t, period="1y", interval="1d", progress=False, auto_adjust=True)
+            if len(ticker_list) == 1:
+                df = raw
+            else:
+                df = raw[t].dropna(how="all") if t in raw.columns.get_level_values(0) else pd.DataFrame()
             if df.empty or len(df) < 22:
                 continue
             close = df["Close"].squeeze()
@@ -343,7 +446,7 @@ def fetch_fundamentals(tickers):
     for idx, t in enumerate(tickers):
         row = {"Ticker": t}
         if idx > 0:
-            time.sleep(1.5)
+            time.sleep(0.5)
         try:
             obj = yf.Ticker(t)
             info = obj.info
@@ -413,10 +516,23 @@ def fetch_fundamentals(tickers):
             row["InstitPct"] = round((info.get("heldPercentInstitutions") or 0) * 100, 1)
             row["DaysToCover"] = info.get("shortRatio")
 
+            day_chg = info.get("regularMarketChangePercent")
+            row["DayChgPct"] = round(day_chg, 2) if day_chg is not None else None
+
             post_chg = info.get("postMarketChangePercent")
             pre_chg = info.get("preMarketChangePercent")
             row["PostMktChg"] = round(post_chg, 2) if post_chg is not None else None
             row["PreMktChg"] = round(pre_chg, 2) if pre_chg is not None else None
+
+            # Overnight: total move from regular close to latest extended-hours price
+            reg_price = info.get("regularMarketPrice")
+            post_price = info.get("postMarketPrice")
+            pre_price = info.get("preMarketPrice")
+            ext_price = pre_price or post_price  # pre-market takes priority (more recent)
+            if ext_price and reg_price and reg_price > 0:
+                row["OvernightChg"] = round((ext_price / reg_price - 1) * 100, 2)
+            else:
+                row["OvernightChg"] = None
 
             # Historical P/S range (3 years)
             shares = info.get("sharesOutstanding")
@@ -480,7 +596,7 @@ def fetch_extras(tickers):
         row = {"Ticker": t, "InsiderSignal": "N/A", "InsiderNet": 0,
                "EarningsBeats": None, "Headlines": [], "InsiderBuys": []}
         if idx > 0:
-            time.sleep(1.0)
+            time.sleep(0.3)
         try:
             obj = yf.Ticker(t)
             try:
@@ -575,27 +691,36 @@ def fetch_extras(tickers):
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def fetch_stocktwits(tickers):
-    out = {}
-    for t in tickers:
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    def _fetch_one(t):
         try:
             r = requests.get(
                 f"https://api.stocktwits.com/api/2/streams/symbol/{t}.json",
-                headers={"User-Agent": "Mozilla/5.0"}, timeout=6,
+                headers={"User-Agent": "Mozilla/5.0"}, timeout=4,
             )
             if r.status_code != 200:
-                continue
+                return t, None
             msgs = r.json().get("messages", [])
             bulls = sum(1 for m in msgs if
                         (m.get("entities") or {}).get("sentiment", {}).get("basic") == "Bullish")
             bears = sum(1 for m in msgs if
                         (m.get("entities") or {}).get("sentiment", {}).get("basic") == "Bearish")
             total = bulls + bears
-            out[t] = {
+            return t, {
                 "bull_pct": round(bulls / total * 100) if total else None,
                 "msg_count": len(msgs),
             }
         except Exception:
-            pass
+            return t, None
+
+    out = {}
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        futures = {pool.submit(_fetch_one, t): t for t in tickers}
+        for f in as_completed(futures):
+            t, result = f.result()
+            if result is not None:
+                out[t] = result
     return out
 
 
@@ -727,6 +852,176 @@ def score_scanner_candidates(tickers, spy_close, spy_daily_ret):
     )
     df_scored = df_scored.sort_values("ScanScore", ascending=False).reset_index(drop=True)
     return df_scored
+
+
+# ── Market Headlines (Google News RSS) ────────────────────────────────────────
+
+@st.cache_data(ttl=900, show_spinner=False)
+def fetch_market_headlines():
+    """Fetch top macro/market headlines from Google News RSS. Free, no API key."""
+    from bs4 import BeautifulSoup
+    headlines = []
+    queries = ["stock+market", "S%26P+500", "Federal+Reserve", "economy"]
+    seen_titles = set()
+    for q in queries:
+        try:
+            r = requests.get(
+                f"https://news.google.com/rss/search?q={q}+when:1d&hl=en-US&gl=US&ceid=US:en",
+                headers={"User-Agent": "Mozilla/5.0"}, timeout=8,
+            )
+            if r.status_code != 200:
+                continue
+            soup = BeautifulSoup(r.content, "html.parser")
+            for item in soup.find_all("item")[:5]:
+                title = item.find("title")
+                pub_date = item.find("pubDate")
+                source = item.find("source")
+                t = title.text.strip() if title else ""
+                if not t or t in seen_titles:
+                    continue
+                seen_titles.add(t)
+                headlines.append({
+                    "title": t,
+                    "source": source.text.strip() if source else "",
+                    "date": pub_date.text.strip() if pub_date else "",
+                })
+        except Exception:
+            continue
+    return headlines[:15]
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def ai_market_summary(headlines, api_key):
+    """Generate a concise AI market conditions summary from headlines.
+    Accepts list of dicts or tuple of (title, source) pairs for cache hashability.
+    """
+    if not api_key or not headlines:
+        return None
+
+    lines = []
+    for h in headlines[:15]:
+        if isinstance(h, dict):
+            lines.append(f"- {h['title']} ({h['source']})")
+        else:
+            lines.append(f"- {h[0]} ({h[1]})")
+    news_block = "\n".join(lines)
+
+    prompt = f"""You are a market analyst. Based on these current headlines, provide:
+
+1. **MARKET READ** (2-3 sentences): What is the dominant narrative driving markets right now? What's the tone — risk-on, risk-off, mixed? Be direct and specific.
+
+2. **KEY CATALYSTS THIS WEEK**: List 3-5 specific events, data releases, or developments to watch in the next few days. Include dates if known. Focus on what could move markets.
+
+3. **WATCH FOR**: One sentence on the biggest risk or surprise scenario that isn't priced in.
+
+Headlines:
+{news_block}
+
+Be concise and actionable. No filler. Write for someone managing a small-cap growth portfolio."""
+
+    try:
+        resp = requests.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            json={
+                "model": "claude-haiku-4-5",
+                "max_tokens": 400,
+                "messages": [{"role": "user", "content": prompt}],
+            },
+            timeout=30,
+        )
+        if resp.status_code == 200:
+            return resp.json()["content"][0]["text"]
+        return None
+    except Exception:
+        return None
+
+
+# ── AI Headline Sentiment (lightweight, feeds Narrative pillar) ───────────────
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def score_headlines_ai(tickers_and_headlines, api_key):
+    """Score headline sentiment for multiple tickers in a single Claude call.
+    Accepts dict or tuple of (ticker, headlines) pairs (tuple for Streamlit cache).
+    Returns {ticker: {"score": -1 to 1, "summary": "one line"}} .
+    Score: -1 (very bearish) to +1 (very bullish), 0 = neutral/mixed.
+    """
+    if not api_key or not tickers_and_headlines:
+        return {}
+
+    # Convert tuple to iterable of (ticker, headlines) pairs
+    items = tickers_and_headlines.items() if isinstance(tickers_and_headlines, dict) else tickers_and_headlines
+
+    # Build a compact prompt with all tickers
+    blocks = []
+    tickers_with_news = []
+    for ticker, headlines in items:
+        if not headlines:
+            continue
+        titles = [h.get("title", "") for h in headlines[:5] if h.get("title")]
+        if not titles:
+            continue
+        tickers_with_news.append(ticker)
+        block = f"{ticker}:\n" + "\n".join(f"  - {t}" for t in titles)
+        blocks.append(block)
+
+    if not blocks:
+        return {}
+
+    prompt = f"""Score the headline sentiment for each ticker below. For each ticker, respond with ONLY a JSON line:
+{{"ticker": "XXX", "score": 0.0, "summary": "one line"}}
+
+Score range: -1.0 (very bearish) to +1.0 (very bullish). 0.0 = neutral/mixed.
+Consider: Is the news positive for the stock price? Are there catalysts, risks, or neutral noise?
+Be calibrated: most routine news is near 0. Only strong positive/negative warrants >0.5 or <-0.5.
+
+Headlines:
+{chr(10).join(blocks)}
+
+Respond with one JSON line per ticker, nothing else."""
+
+    try:
+        resp = requests.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            json={
+                "model": "claude-haiku-4-5",
+                "max_tokens": 400,
+                "messages": [{"role": "user", "content": prompt}],
+            },
+            timeout=30,
+        )
+        if resp.status_code != 200:
+            return {}
+        text = resp.json()["content"][0]["text"]
+        import re
+        results = {}
+        for line in text.strip().split("\n"):
+            line = line.strip()
+            if not line.startswith("{"):
+                continue
+            try:
+                import json as _json
+                obj = _json.loads(line)
+                t = obj.get("ticker", "")
+                if t in tickers_with_news:
+                    results[t] = {
+                        "score": max(-1.0, min(1.0, float(obj.get("score", 0)))),
+                        "summary": obj.get("summary", ""),
+                    }
+            except Exception:
+                continue
+        return results
+    except Exception:
+        return {}
 
 
 # ── AI Narrative Synthesis ───────────────────────────────────────────────────

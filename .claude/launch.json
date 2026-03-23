@@ -3,9 +3,10 @@
   "configurations": [
     {
       "name": "portfolio-app",
-      "runtimeExecutable": "python3",
-      "runtimeArgs": ["/tmp/run_portfolio_app.py"],
-      "port": 8501
+      "runtimeExecutable": "/bin/bash",
+      "runtimeArgs": ["-c", "cd /Users/kieran/Projects/Investment && python3 -m streamlit run portfolio_app.py --server.port $PORT --server.headless true"],
+      "port": 8502,
+      "autoPort": true
     }
   ]
 }
