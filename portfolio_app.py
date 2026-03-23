@@ -33,7 +33,7 @@ st.set_page_config(
     page_title="Convexity Terminal",
     page_icon="◣",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 
 st.markdown("""
@@ -45,26 +45,17 @@ st.markdown("""
     div[data-testid="stVerticalBlock"] > div { gap: 0.4rem; }
     .main .block-container { font-family: 'Inter', -apple-system, sans-serif; }
 
-    /* ── Hide Streamlit chrome (keep sidebar toggle only) ── */
+    /* ── Hide Streamlit chrome ── */
     #MainMenu, footer { visibility: hidden; }
     div[data-testid="stDecoration"] { display: none; }
-    /* Hide Streamlit Cloud toolbar (share/star/edit/deploy) — desktop only */
-    @media (min-width: 768px) {
-        div[data-testid="stToolbar"] { display: none !important; }
-        .stAppToolbar { display: none !important; }
-    }
-    /* On mobile, hide only the cloud buttons, keep sidebar toggle */
-    @media (max-width: 767px) {
-        button[data-testid="baseButton-headerNoPadding"] { display: none !important; }
-    }
-    /* Minimal header — just the sidebar toggle, no background */
-    header[data-testid="stHeader"] {
-        background: transparent !important;
-        backdrop-filter: none !important;
-        height: 2.5rem !important;
-    }
-    /* Hide the running man / status indicator */
+    div[data-testid="stToolbar"] { display: none !important; }
+    .stAppToolbar { display: none !important; }
+    header[data-testid="stHeader"] { display: none !important; }
     div[data-testid="stStatusWidget"] { display: none !important; }
+    /* Hide sidebar completely — all management is in Settings tab */
+    section[data-testid="stSidebar"] { display: none !important; }
+    button[data-testid="stSidebarNavToggle"] { display: none !important; }
+    button[data-testid="collapsedControl"] { display: none !important; }
 
     /* ── Metrics cards ── */
     div[data-testid="stMetric"] {
@@ -348,179 +339,10 @@ def load_score_history():
 
 # ── Sidebar ──────────────────────────────────────────────────────────────────
 
-with st.sidebar:
-    st.title("Portfolio")
-    grad_divider()
-
-    # ── Watchlist selector ──
-    wl_names = list(st.session_state.watchlists.keys())
-    active_idx = wl_names.index(st.session_state.active_watchlist) if st.session_state.active_watchlist in wl_names else 0
-    chosen_wl = st.selectbox("Watchlist", wl_names, index=active_idx, key="wl_select")
-    if chosen_wl != st.session_state.active_watchlist:
-        st.session_state.active_watchlist = chosen_wl
-        st.session_state.tickers = st.session_state.watchlists[chosen_wl]
-        st.cache_data.clear()
-        st.rerun()
-
-    wl_c1, wl_c2 = st.columns(2)
-    with wl_c1:
-        if st.button("Refresh All Data", use_container_width=True):
-            st.cache_data.clear()
-            st.rerun()
-    with wl_c2:
-        st.caption(f"{len(st.session_state.tickers)} tickers")
-    st.caption(f"Cache TTL — Price: 5 min | Fund: 30 min | Sentiment: 15 min")
-    st.caption(f"Last load: {datetime.now().strftime('%H:%M:%S')}")
-    grad_divider()
-
-    # ── Watchlist management ──
-    with st.expander("Manage Watchlists"):
-        # Create new watchlist
-        new_wl_name = st.text_input("New watchlist name", placeholder="e.g. Holdings", key="new_wl")
-        if st.button("Create Watchlist", use_container_width=True, key="btn_create_wl"):
-            if new_wl_name and new_wl_name not in st.session_state.watchlists:
-                st.session_state.watchlists[new_wl_name] = []
-                save_watchlists(st.session_state.watchlists)
-                st.session_state.active_watchlist = new_wl_name
-                st.session_state.tickers = []
-                st.cache_data.clear()
-                st.rerun()
-
-        grad_divider()
-
-        # Import Yahoo Finance CSV
-        st.markdown("**Import from Yahoo Finance**")
-        st.caption("Export your watchlist from Yahoo Finance (CSV), then upload here.")
-        uploaded = st.file_uploader("Upload CSV", type=["csv"], key="csv_upload", label_visibility="collapsed")
-        import_target = st.selectbox("Import into", wl_names, key="import_target")
-        if st.button("Import", use_container_width=True, key="btn_import") and uploaded:
-            imported = parse_yahoo_csv(uploaded)
-            if imported:
-                existing = st.session_state.watchlists.get(import_target, [])
-                merged = list(dict.fromkeys(existing + imported))  # dedupe, preserve order
-                st.session_state.watchlists[import_target] = merged
-                save_watchlists(st.session_state.watchlists)
-                if import_target == st.session_state.active_watchlist:
-                    st.session_state.tickers = merged
-                st.cache_data.clear()
-                st.success(f"Imported {len(imported)} tickers into '{import_target}'")
-                st.rerun()
-            else:
-                st.error("No tickers found in CSV. Expected a 'Symbol' column.")
-
-        grad_divider()
-
-        # Rename watchlist
-        rename_val = st.text_input("Rename current watchlist", value=st.session_state.active_watchlist, key="rename_wl")
-        if st.button("Rename", use_container_width=True, key="btn_rename_wl"):
-            if rename_val and rename_val != st.session_state.active_watchlist and rename_val not in st.session_state.watchlists:
-                tickers_copy = st.session_state.watchlists.pop(st.session_state.active_watchlist)
-                st.session_state.watchlists[rename_val] = tickers_copy
-                st.session_state.active_watchlist = rename_val
-                st.session_state.tickers = tickers_copy
-                save_watchlists(st.session_state.watchlists)
-                st.rerun()
-
-        grad_divider()
-
-        # Duplicate watchlist
-        dup_name = st.text_input("Duplicate as", placeholder="e.g. Watchlist Copy", key="dup_wl")
-        if st.button("Duplicate Current", use_container_width=True, key="btn_dup_wl"):
-            if dup_name and dup_name not in st.session_state.watchlists:
-                st.session_state.watchlists[dup_name] = st.session_state.tickers.copy()
-                save_watchlists(st.session_state.watchlists)
-                st.rerun()
-
-        # Delete watchlist (only if more than one)
-        if len(wl_names) > 1:
-            del_wl = st.selectbox("Delete watchlist", ["--"] + [w for w in wl_names if w != st.session_state.active_watchlist], key="del_wl")
-            if st.button("Delete", use_container_width=True, key="btn_del_wl"):
-                if del_wl != "--" and del_wl in st.session_state.watchlists:
-                    del st.session_state.watchlists[del_wl]
-                    save_watchlists(st.session_state.watchlists)
-                    st.rerun()
-
-    grad_divider()
-
-    # ── Ticker management (within active watchlist) ──
-    st.subheader("Manage Tickers")
-    new_t = st.text_input("Add ticker", placeholder="e.g. NVDA").upper().strip()
-    if st.button("Add", use_container_width=True):
-        if new_t and new_t not in st.session_state.tickers:
-            st.session_state.tickers.append(new_t)
-            st.session_state.watchlists[st.session_state.active_watchlist] = st.session_state.tickers
-            save_watchlists(st.session_state.watchlists)
-            st.cache_data.clear()
-            st.rerun()
-        elif new_t in st.session_state.tickers:
-            st.warning(f"{new_t} already in list.")
-    remove_t = st.selectbox("Remove ticker", ["--"] + sorted(st.session_state.tickers))
-    if st.button("Remove", use_container_width=True):
-        if remove_t != "--":
-            st.session_state.tickers.remove(remove_t)
-            st.session_state.watchlists[st.session_state.active_watchlist] = st.session_state.tickers
-            save_watchlists(st.session_state.watchlists)
-            st.cache_data.clear()
-            st.rerun()
-    grad_divider()
-    selected = st.multiselect("Filter view", st.session_state.tickers,
-                               default=st.session_state.tickers)
-    grad_divider()
-    # Single-ticker deep-dive selector
-    st.subheader("Ticker Deep Dive")
-    deep_dive_ticker = st.selectbox("Select ticker", ["--"] + sorted(st.session_state.tickers), key="deep_dive")
-    grad_divider()
-
-    # Ideas & Roadmap (moved from tab)
-    with st.expander("Ideas & Roadmap"):
-        st.markdown("**From the S&J Framework — high priority, free to build**")
-        st.markdown("""
-| Feature | Status |
-|---|---|
-| ~~Sector / theme tagging~~ | DONE |
-| Peer comparison table | Planned |
-| ~~Custom score weight sliders~~ | DONE |
-| ~~Priced for perfection flag~~ | DONE |
-| EBITDA turn detector | Planned |
-| Google Trends (pytrends) | Planned |
-| ~~Relative strength vs SPY~~ | DONE |
-| ~~Earnings calendar view~~ | DONE |
-| Volume spike detector | Planned |
-| ~~Export to CSV~~ | DONE |
-        """)
-        st.markdown("**Performance review**")
-        st.markdown("""
-| Area | Notes |
-|---|---|
-| StockTwits fetch | Now in main data load for Narrative pillar — adds ~10-15s. Review: batch API, async, or move to background refresh |
-| Sector ETF fetch | 11 individual downloads for Market Conditions. Consider bulk download or pre-market cron |
-| Scanner scoring | Caps at 80 tickers but still heavy. Consider caching scored results |
-        """)
-        st.markdown("**Needs API / data source**")
-        st.markdown("""
-| Feature | Source | Notes |
-|---|---|---|
-| **Options & dark pool flow** | [Unusual Whales API](https://unusualwhales.com/api) | Paid API — options flow, dark pool prints, whale alerts, Congress trades. MCP available? TBC |
-| **X / social sentiment** | [xAI Grok API](https://x.ai/api) | X post sentiment per ticker. Grok API is live (free tier available). MCP available? TBC |
-| **Options chain analysis** | TBD — research needed | Implied vol surface, put/call skew, gamma exposure. Candidates: Tradier, Polygon.io, Tastytrade API |
-| ETF ownership & flows | ETF.com / Bloomberg | Which ETFs hold each ticker; inflow/outflow signal |
-| SEC 8-K filing alerts | EDGAR RSS | Catalyst detection, dilution risk — free via EDGAR RSS, no API key needed |
-| Forward P/S & EV/Rev | Refinitiv / Koyfin | Trailing multiples overstate valuation for fast-growers |
-| Real-time short interest | S3 Analytics / Ortex | yfinance short data is ~2 weeks stale (FINRA bi-monthly) |
-| Institutional-grade beta | Bloomberg / Refinitiv | yfinance uses 5yr monthly — unreliable for small caps & recent IPOs |
-        """)
-        st.markdown("**MCP servers to explore**")
-        st.markdown("""
-| MCP | What it unlocks |
-|---|---|
-| Unusual Whales MCP | Options flow + dark pool data directly in Claude |
-| Browser/Firecrawl MCP | Scrape X, Stocktwits, Reddit for sentiment |
-| Polygon.io MCP | Real-time options chain, news, financials |
-| EDGAR MCP | SEC filings, 8-K catalyst alerts |
-        """)
-
-    grad_divider()
-    st.caption(f"Updated: {datetime.now().strftime('%H:%M:%S')}")
+# ── Watchlist selection (must happen before data load) ────────────────────────
+wl_names = list(st.session_state.watchlists.keys())
+active_idx = wl_names.index(st.session_state.active_watchlist) if st.session_state.active_watchlist in wl_names else 0
+selected = st.session_state.tickers
 
 # ── Load all data once ───────────────────────────────────────────────────────
 
@@ -714,7 +536,35 @@ _data_quality = "Full" if _has_fund_data else "Limited"
 
 st.title("◣ Convexity Terminal")
 _data_ts = datetime.now().strftime('%Y-%m-%d %H:%M')
-st.caption(f"As of {_data_ts}  |  **{st.session_state.active_watchlist}**  |  {len(df_price)} tickers")
+st.caption(f"As of {_data_ts}  |  {len(df_price)} tickers")
+
+# ── Top bar — compact controls ───────────────────────────────────────────────
+_tb1, _tb2, _tb3, _tb4 = st.columns([2.5, 2, 2, 1])
+with _tb1:
+    chosen_wl = st.selectbox("Watchlist", wl_names, index=active_idx, key="wl_select",
+                              label_visibility="collapsed")
+    if chosen_wl != st.session_state.active_watchlist:
+        st.session_state.active_watchlist = chosen_wl
+        st.session_state.tickers = st.session_state.watchlists[chosen_wl]
+        st.cache_data.clear()
+        st.rerun()
+with _tb2:
+    new_t = st.text_input("Add ticker", placeholder="+ Add ticker",
+                           key="top_add_ticker", label_visibility="collapsed").upper().strip()
+    if new_t and new_t not in st.session_state.tickers:
+        st.session_state.tickers.append(new_t)
+        st.session_state.watchlists[st.session_state.active_watchlist] = st.session_state.tickers
+        save_watchlists(st.session_state.watchlists)
+        st.cache_data.clear()
+        st.rerun()
+with _tb3:
+    deep_dive_ticker = st.selectbox("Deep Dive", ["--"] + sorted(st.session_state.tickers),
+                                     key="deep_dive", label_visibility="collapsed")
+with _tb4:
+    if st.button("Refresh", use_container_width=True, key="btn_refresh_top"):
+        st.cache_data.clear()
+        st.rerun()
+
 if not _has_fund_data:
     st.warning(
         "⚠️ **Limited data** — Yahoo Finance rate-limited fundamental data. "
@@ -913,8 +763,8 @@ if deep_dive_ticker != "--" and deep_dive_ticker in df_all["Ticker"].values:
     grad_divider()
 
 # ── TABS (visible at top, right after KPI row) ──────────────────────────────
-tab_dash, tab_conv, tab_themes, tab_str, tab_charts, tab_sig, tab_scan = st.tabs([
-    "Dashboard", "Convexity", "Themes", "Strength", "Charts", "Signals", "Scanner",
+tab_dash, tab_conv, tab_themes, tab_str, tab_charts, tab_sig, tab_scan, tab_settings = st.tabs([
+    "Dashboard", "Convexity", "Themes", "Strength", "Charts", "Signals", "Scanner", "Settings",
 ])
 
 # Stage color map (used across multiple tabs)
@@ -2925,3 +2775,122 @@ with tab_scan:
                         "text/csv",
                         key="dl_scanner",
                     )
+
+# ── TAB: Settings ────────────────────────────────────────────────────────────
+
+with tab_settings:
+    section_header("Portfolio Settings", "#8b949e")
+
+    _set_c1, _set_c2 = st.columns(2)
+
+    with _set_c1:
+        # ── Ticker Management ──
+        st.markdown("#### Manage Tickers")
+        st.caption(f"Active watchlist: **{st.session_state.active_watchlist}** ({len(st.session_state.tickers)} tickers)")
+
+        _add_t = st.text_input("Add ticker", placeholder="e.g. NVDA", key="settings_add_ticker").upper().strip()
+        if st.button("Add Ticker", use_container_width=True, key="settings_btn_add"):
+            if _add_t and _add_t not in st.session_state.tickers:
+                st.session_state.tickers.append(_add_t)
+                st.session_state.watchlists[st.session_state.active_watchlist] = st.session_state.tickers
+                save_watchlists(st.session_state.watchlists)
+                st.cache_data.clear()
+                st.rerun()
+            elif _add_t in st.session_state.tickers:
+                st.warning(f"{_add_t} already in list.")
+
+        _rem_t = st.selectbox("Remove ticker", ["--"] + sorted(st.session_state.tickers), key="settings_remove")
+        if st.button("Remove Ticker", use_container_width=True, key="settings_btn_remove"):
+            if _rem_t != "--":
+                st.session_state.tickers.remove(_rem_t)
+                st.session_state.watchlists[st.session_state.active_watchlist] = st.session_state.tickers
+                save_watchlists(st.session_state.watchlists)
+                st.cache_data.clear()
+                st.rerun()
+
+        grad_divider()
+
+        # Current tickers display
+        st.markdown("**Current tickers:**")
+        st.caption(", ".join(sorted(st.session_state.tickers)) if st.session_state.tickers else "No tickers")
+
+    with _set_c2:
+        # ── Watchlist Management ──
+        st.markdown("#### Manage Watchlists")
+
+        _new_wl = st.text_input("New watchlist name", placeholder="e.g. Holdings", key="settings_new_wl")
+        if st.button("Create Watchlist", use_container_width=True, key="settings_btn_create_wl"):
+            if _new_wl and _new_wl not in st.session_state.watchlists:
+                st.session_state.watchlists[_new_wl] = []
+                save_watchlists(st.session_state.watchlists)
+                st.session_state.active_watchlist = _new_wl
+                st.session_state.tickers = []
+                st.cache_data.clear()
+                st.rerun()
+
+        grad_divider()
+
+        # Import Yahoo Finance CSV
+        st.markdown("**Import from Yahoo Finance**")
+        st.caption("Export your watchlist from Yahoo Finance (CSV), then upload here.")
+        _uploaded = st.file_uploader("Upload CSV", type=["csv"], key="settings_csv", label_visibility="collapsed")
+        _import_target = st.selectbox("Import into", wl_names, key="settings_import_target")
+        if st.button("Import", use_container_width=True, key="settings_btn_import") and _uploaded:
+            _imported = parse_yahoo_csv(_uploaded)
+            if _imported:
+                _existing = st.session_state.watchlists.get(_import_target, [])
+                _merged = list(dict.fromkeys(_existing + _imported))
+                st.session_state.watchlists[_import_target] = _merged
+                save_watchlists(st.session_state.watchlists)
+                if _import_target == st.session_state.active_watchlist:
+                    st.session_state.tickers = _merged
+                st.cache_data.clear()
+                st.success(f"Imported {len(_imported)} tickers into '{_import_target}'")
+                st.rerun()
+            else:
+                st.error("No tickers found in CSV. Expected a 'Symbol' column.")
+
+        grad_divider()
+
+        # Rename
+        _rename_val = st.text_input("Rename current watchlist", value=st.session_state.active_watchlist, key="settings_rename")
+        if st.button("Rename", use_container_width=True, key="settings_btn_rename"):
+            if _rename_val and _rename_val != st.session_state.active_watchlist and _rename_val not in st.session_state.watchlists:
+                _tickers_copy = st.session_state.watchlists.pop(st.session_state.active_watchlist)
+                st.session_state.watchlists[_rename_val] = _tickers_copy
+                st.session_state.active_watchlist = _rename_val
+                st.session_state.tickers = _tickers_copy
+                save_watchlists(st.session_state.watchlists)
+                st.rerun()
+
+        # Duplicate
+        _dup_name = st.text_input("Duplicate as", placeholder="e.g. Watchlist Copy", key="settings_dup")
+        if st.button("Duplicate Current", use_container_width=True, key="settings_btn_dup"):
+            if _dup_name and _dup_name not in st.session_state.watchlists:
+                st.session_state.watchlists[_dup_name] = st.session_state.tickers.copy()
+                save_watchlists(st.session_state.watchlists)
+                st.rerun()
+
+        # Delete (only if more than one)
+        if len(wl_names) > 1:
+            _del_wl = st.selectbox("Delete watchlist",
+                                    ["--"] + [w for w in wl_names if w != st.session_state.active_watchlist],
+                                    key="settings_del")
+            if st.button("Delete", use_container_width=True, key="settings_btn_del"):
+                if _del_wl != "--" and _del_wl in st.session_state.watchlists:
+                    del st.session_state.watchlists[_del_wl]
+                    save_watchlists(st.session_state.watchlists)
+                    st.rerun()
+
+    grad_divider()
+
+    # ── Cache & Data Info ──
+    st.markdown("#### Data")
+    _info_c1, _info_c2 = st.columns(2)
+    with _info_c1:
+        st.caption(f"Cache TTL — Price: 5 min | Fund: 30 min | Sentiment: 15 min")
+        st.caption(f"Last load: {datetime.now().strftime('%H:%M:%S')}")
+    with _info_c2:
+        if st.button("Clear Cache & Reload", use_container_width=True, key="settings_clear_cache"):
+            st.cache_data.clear()
+            st.rerun()
