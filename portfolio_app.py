@@ -538,6 +538,19 @@ st.title("◣ Convexity Terminal")
 _data_ts = datetime.now().strftime('%Y-%m-%d %H:%M')
 st.caption(f"As of {_data_ts}  |  {len(df_price)} tickers")
 
+# ── Fragment: Top bar ticker add (independent rerun) ────────────────────────────
+
+@st.fragment
+def _topbar_ticker_add_fragment():
+    """Add ticker from top bar without full page reload."""
+    new_t = st.text_input("Add ticker", placeholder="+ Add ticker",
+                           key="top_add_ticker", label_visibility="collapsed").upper().strip()
+    if new_t and new_t not in st.session_state.tickers:
+        st.session_state.tickers.append(new_t)
+        st.session_state.watchlists[st.session_state.active_watchlist] = st.session_state.tickers
+        save_watchlists(st.session_state.watchlists)
+
+
 # ── Top bar — compact controls ───────────────────────────────────────────────
 _tb1, _tb2, _tb3, _tb4 = st.columns([2.5, 2, 2, 1])
 with _tb1:
@@ -549,14 +562,7 @@ with _tb1:
         st.cache_data.clear()
         st.rerun()
 with _tb2:
-    new_t = st.text_input("Add ticker", placeholder="+ Add ticker",
-                           key="top_add_ticker", label_visibility="collapsed").upper().strip()
-    if new_t and new_t not in st.session_state.tickers:
-        st.session_state.tickers.append(new_t)
-        st.session_state.watchlists[st.session_state.active_watchlist] = st.session_state.tickers
-        save_watchlists(st.session_state.watchlists)
-        st.cache_data.clear()
-        st.rerun()
+    _topbar_ticker_add_fragment()
 with _tb3:
     deep_dive_ticker = st.selectbox("Deep Dive", ["--"] + sorted(st.session_state.tickers),
                                      key="deep_dive", label_visibility="collapsed")
@@ -2776,6 +2782,39 @@ with tab_scan:
                         key="dl_scanner",
                     )
 
+# ── Fragment: Ticker Management (independent rerun) ────────────────────────────
+
+@st.fragment
+def _ticker_management_fragment():
+    """Ticker add/remove UI — reruns independently without full page reload."""
+    st.markdown("#### Manage Tickers")
+    st.caption(f"Active watchlist: **{st.session_state.active_watchlist}** ({len(st.session_state.tickers)} tickers)")
+
+    _add_t = st.text_input("Add ticker", placeholder="e.g. NVDA", key="settings_add_ticker").upper().strip()
+    if st.button("Add Ticker", use_container_width=True, key="settings_btn_add"):
+        if _add_t and _add_t not in st.session_state.tickers:
+            st.session_state.tickers.append(_add_t)
+            st.session_state.watchlists[st.session_state.active_watchlist] = st.session_state.tickers
+            save_watchlists(st.session_state.watchlists)
+            st.success(f"Added {_add_t}")
+        elif _add_t in st.session_state.tickers:
+            st.warning(f"{_add_t} already in list.")
+
+    _rem_t = st.selectbox("Remove ticker", ["--"] + sorted(st.session_state.tickers), key="settings_remove")
+    if st.button("Remove Ticker", use_container_width=True, key="settings_btn_remove"):
+        if _rem_t != "--":
+            st.session_state.tickers.remove(_rem_t)
+            st.session_state.watchlists[st.session_state.active_watchlist] = st.session_state.tickers
+            save_watchlists(st.session_state.watchlists)
+            st.success(f"Removed {_rem_t}")
+
+    grad_divider()
+
+    # Current tickers display
+    st.markdown("**Current tickers:**")
+    st.caption(", ".join(sorted(st.session_state.tickers)) if st.session_state.tickers else "No tickers")
+
+
 # ── TAB: Settings ────────────────────────────────────────────────────────────
 
 with tab_settings:
@@ -2784,35 +2823,8 @@ with tab_settings:
     _set_c1, _set_c2 = st.columns(2)
 
     with _set_c1:
-        # ── Ticker Management ──
-        st.markdown("#### Manage Tickers")
-        st.caption(f"Active watchlist: **{st.session_state.active_watchlist}** ({len(st.session_state.tickers)} tickers)")
-
-        _add_t = st.text_input("Add ticker", placeholder="e.g. NVDA", key="settings_add_ticker").upper().strip()
-        if st.button("Add Ticker", use_container_width=True, key="settings_btn_add"):
-            if _add_t and _add_t not in st.session_state.tickers:
-                st.session_state.tickers.append(_add_t)
-                st.session_state.watchlists[st.session_state.active_watchlist] = st.session_state.tickers
-                save_watchlists(st.session_state.watchlists)
-                st.cache_data.clear()
-                st.rerun()
-            elif _add_t in st.session_state.tickers:
-                st.warning(f"{_add_t} already in list.")
-
-        _rem_t = st.selectbox("Remove ticker", ["--"] + sorted(st.session_state.tickers), key="settings_remove")
-        if st.button("Remove Ticker", use_container_width=True, key="settings_btn_remove"):
-            if _rem_t != "--":
-                st.session_state.tickers.remove(_rem_t)
-                st.session_state.watchlists[st.session_state.active_watchlist] = st.session_state.tickers
-                save_watchlists(st.session_state.watchlists)
-                st.cache_data.clear()
-                st.rerun()
-
-        grad_divider()
-
-        # Current tickers display
-        st.markdown("**Current tickers:**")
-        st.caption(", ".join(sorted(st.session_state.tickers)) if st.session_state.tickers else "No tickers")
+        # ── Ticker Management (in fragment for faster updates) ──
+        _ticker_management_fragment()
 
     with _set_c2:
         # ── Watchlist Management ──
