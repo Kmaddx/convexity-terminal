@@ -22,6 +22,7 @@ from data import (
     scan_yahoo_screener, scan_yahoo_predefined, scan_finviz, scan_yahoo_trending,
     claude_summarize, score_headlines_ai,
     fetch_market_headlines, ai_market_summary,
+    _price_fetch_error,
 )
 from themes import (
     load_themes, save_themes, get_ticker_themes, get_theme_tickers,
@@ -373,7 +374,20 @@ with st.status("◣ Loading Convexity Terminal...", expanded=True) as _status:
         df_price = _f_price.result()
         if df_price.empty:
             _status.update(label="◣ Failed", state="error")
-            st.error("No data. Check internet connection.")
+            import data as _data_mod
+            _err = _data_mod._price_fetch_error
+            _is_yahoo_issue = any(x in _err for x in ["401", "Crumb", "Unauthorized"])
+            if _is_yahoo_issue:
+                st.error(
+                    "Yahoo Finance is temporarily unavailable (authentication error).  \n"
+                    "This is a known intermittent issue on Yahoo's end — usually resolves within 15–30 minutes.  \n\n"
+                    "**Try refreshing in a few minutes.**"
+                )
+            else:
+                st.error("No data loaded. Check your internet connection and try again.")
+            if st.button("Retry Now", type="primary"):
+                st.cache_data.clear()
+                st.rerun()
             st.stop()
 
         st.write("Loading fundamentals & signals...")

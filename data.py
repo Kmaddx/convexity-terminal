@@ -51,9 +51,13 @@ def _save_fund_cache(data_by_ticker):
 
 # ── Price data ───────────────────────────────────────────────────────────────
 
-@st.cache_data(ttl=300, show_spinner=False)
+_price_fetch_error = ""  # Last error reason, readable by portfolio_app.py
+
+
 def fetch_price_data(tickers):
+    global _price_fetch_error
     import time
+    _price_fetch_error = ""
     results = []
     ticker_list = list(tickers)
     # Batch download all tickers at once (much faster than sequential)
@@ -65,7 +69,8 @@ def fetch_price_data(tickers):
                               progress=False, auto_adjust=True, group_by="ticker", threads=True)
             if not raw.empty:
                 break
-        except Exception:
+        except Exception as e:
+            _price_fetch_error = str(e)
             if attempt == 0:
                 time.sleep(2)  # Wait before retry
     for t in ticker_list:
