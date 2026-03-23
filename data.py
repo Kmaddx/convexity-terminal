@@ -602,10 +602,10 @@ def fetch_fundamentals(tickers):
     with ThreadPoolExecutor(max_workers=6) as pool:
         futures = {pool.submit(_fetch_single_fundamental, t, _disk_cache): t for t in tickers}
         results_map = {}
-        for future in as_completed(futures):
+        for future in as_completed(futures, timeout=30):
             t = futures[future]
             try:
-                row, cache_entry, rl = future.result()
+                row, cache_entry, rl = future.result(timeout=15)
                 results_map[t] = row
                 if cache_entry:
                     _new_cache[t] = cache_entry
@@ -713,10 +713,10 @@ def fetch_extras(tickers):
     results_map = {}
     with ThreadPoolExecutor(max_workers=6) as pool:
         futures = {pool.submit(_fetch_single_extra, t): t for t in tickers}
-        for future in as_completed(futures):
+        for future in as_completed(futures, timeout=30):
             t = futures[future]
             try:
-                results_map[t] = future.result()
+                results_map[t] = future.result(timeout=15)
             except Exception:
                 results_map[t] = {"Ticker": t, "InsiderSignal": "N/A", "InsiderNet": 0,
                                   "Headlines": [], "InsiderBuys": []}
