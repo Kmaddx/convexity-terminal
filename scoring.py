@@ -252,7 +252,7 @@ def calc_four_pillars(row, themes, spy_ret=None, etf_data=None, st_data=None, ai
 
     # Ticker 3m return vs SPY: up to 15 pts
     if spy_ret:
-        ret3m = _safe(row.get("Ret3m"), 0)
+        ret3m = float(_safe(row.get("Ret3m"), 0))
         spy_3m = spy_ret.get("3m", 0)
         theme_rs = ret3m - spy_3m
         if theme_rs > 0:
