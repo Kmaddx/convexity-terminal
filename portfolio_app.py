@@ -22,7 +22,6 @@ from data import (
     scan_yahoo_screener, scan_yahoo_predefined, scan_finviz, scan_yahoo_trending,
     claude_summarize, score_headlines_ai,
     fetch_market_headlines, ai_market_summary,
-    _price_fetch_error,
 )
 from themes import (
     load_themes, save_themes, get_ticker_themes, get_theme_tickers,
