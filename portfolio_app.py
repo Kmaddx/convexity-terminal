@@ -1064,7 +1064,8 @@ with tab_dash:
             st.markdown(f"- VIX: **{market_env.get('vix_level', 'N/A')}** "
                         f"(vs 20d MA: {market_env.get('vix_ma20', 'N/A')})")
             st.markdown(f"- VIX Trend: **:{vix_trend_color}[{vix_trend}]**")
-            st.markdown(f"- VIX 1Y Percentile: **{market_env.get('vix_pct_rank', 'N/A'):.0f}th**")
+            _vix_pct = market_env.get('vix_pct_rank')
+            st.markdown(f"- VIX 1Y Percentile: **{f'{_vix_pct:.0f}th' if isinstance(_vix_pct, (int, float)) else 'N/A'}**")
 
             st.markdown("**Trend**")
             def _trend_label(val):
