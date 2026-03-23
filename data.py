@@ -437,147 +437,173 @@ def fetch_etf_benchmark_data(etf_tickers):
 # ── Fundamentals ─────────────────────────────────────────────────────────────
 
 @st.cache_data(ttl=1800, show_spinner=False)
+def _fetch_single_fundamental(t, _disk_cache):
+    """Fetch fundamental data for a single ticker. Used by ThreadPoolExecutor."""
+    row = {"Ticker": t}
+    _rate_limited = False
+    try:
+        obj = yf.Ticker(t)
+        info = obj.info
+        _has_real_data = info and any(info.get(k) is not None for k in
+            ["currentPrice", "revenueGrowth", "marketCap", "freeCashflow"])
+        if not _has_real_data:
+            _rate_limited = True
+            if t in _disk_cache:
+                row.update(_disk_cache[t])
+            cache_entry = None
+            if len(row) > 1:
+                cache_entry = {k: v for k, v in row.items()
+                               if k != "Ticker" and not isinstance(v, (list, dict))
+                               and v is not None}
+            return row, cache_entry, _rate_limited
+
+        target_mean = info.get("targetMeanPrice")
+        current = info.get("currentPrice") or info.get("regularMarketPrice")
+        upside = round((target_mean / current - 1) * 100, 1) if target_mean and current else None
+        short_pct = info.get("shortPercentOfFloat")
+        rev_growth = info.get("revenueGrowth")
+        earnings_ts = info.get("earningsDate") or info.get("earningsTimestamp")
+        next_earnings = None
+        if isinstance(earnings_ts, list) and earnings_ts:
+            try:
+                next_earnings = datetime.fromtimestamp(earnings_ts[0]).strftime("%Y-%m-%d")
+            except Exception:
+                pass
+        elif isinstance(earnings_ts, (int, float)) and earnings_ts:
+            try:
+                next_earnings = datetime.fromtimestamp(earnings_ts).strftime("%Y-%m-%d")
+            except Exception:
+                pass
+
+        beta_val = info.get("beta")
+        beta_reliable = beta_val is not None and 0 < beta_val <= 5
+        row.update({
+            "Beta": beta_val,
+            "BetaReliable": beta_reliable,
+            "ShortPct": round(short_pct * 100, 1) if short_pct else None,
+            "MarketCap": info.get("marketCap"),
+            "TargetMean": round(target_mean, 2) if target_mean else None,
+            "TargetLow": info.get("targetLowPrice"),
+            "TargetHigh": info.get("targetHighPrice"),
+            "NumAnalysts": info.get("numberOfAnalystOpinions", 0),
+            "Recommendation": info.get("recommendationKey", ""),
+            "RevenueGrowth": round(rev_growth * 100, 1) if rev_growth else None,
+            "AnalystUpside": upside,
+            "NextEarnings": next_earnings,
+        })
+
+        ps = info.get("priceToSalesTrailing12Months")
+        ev = info.get("enterpriseToEbitda")
+        gm = info.get("grossMargins")
+        row["PS_Current"] = round(ps, 2) if ps else None
+        row["EV_EBITDA"] = round(ev, 1) if ev and ev > 0 else None
+        row["GrossMargin"] = round(gm * 100, 1) if gm else None
+
+        prof = info.get("profitMargins")
+        row["RevGrowthPct"] = round(rev_growth * 100, 1) if rev_growth is not None else None
+        row["Rule40"] = round(rev_growth * 100 + prof * 100, 1) if (rev_growth is not None and prof is not None) else None
+
+        fcf = info.get("freeCashflow")
+        total_cash = info.get("totalCash") or 0
+        row["FCFPositive"] = bool(fcf and fcf > 0)
+        row["FCFValue"] = fcf
+        row["CashRunwayMonths"] = (round((total_cash / abs(fcf)) * 12, 1)
+                                   if fcf and fcf < 0 and total_cash else None)
+
+        row["InsiderPct"] = round((info.get("heldPercentInsiders") or 0) * 100, 1)
+        row["InstitPct"] = round((info.get("heldPercentInstitutions") or 0) * 100, 1)
+        row["DaysToCover"] = info.get("shortRatio")
+
+        day_chg = info.get("regularMarketChangePercent")
+        row["DayChgPct"] = round(day_chg, 2) if day_chg is not None else None
+
+        post_chg = info.get("postMarketChangePercent")
+        pre_chg = info.get("preMarketChangePercent")
+        row["PostMktChg"] = round(post_chg, 2) if post_chg is not None else None
+        row["PreMktChg"] = round(pre_chg, 2) if pre_chg is not None else None
+
+        # Overnight: total move from regular close to latest extended-hours price
+        reg_price = info.get("regularMarketPrice")
+        post_price = info.get("postMarketPrice")
+        pre_price = info.get("preMarketPrice")
+        ext_price = pre_price or post_price
+        if ext_price and reg_price and reg_price > 0:
+            row["OvernightChg"] = round((ext_price / reg_price - 1) * 100, 2)
+        else:
+            row["OvernightChg"] = None
+
+        # Historical P/S range (3 years)
+        shares = info.get("sharesOutstanding")
+        if shares and ps:
+            try:
+                hist = yf.download(t, period="3y", interval="1mo",
+                                   progress=False, auto_adjust=True)
+                q_fin = getattr(obj, "quarterly_income_stmt", None)
+                if q_fin is None or (hasattr(q_fin, "empty") and q_fin.empty):
+                    q_fin = getattr(obj, "quarterly_financials", None)
+                rev_row = None
+                if q_fin is not None and not q_fin.empty:
+                    for name in ["Total Revenue", "Revenue", "Net Revenue"]:
+                        if name in q_fin.index:
+                            rev_row = name
+                            break
+                if not hist.empty and rev_row:
+                    monthly_close = hist["Close"].squeeze()
+                    rev_q = q_fin.loc[rev_row].sort_index()
+                    ttm = rev_q.rolling(4).sum().dropna()
+                    if not ttm.empty:
+                        ttm.index = ttm.index.tz_localize(None) if ttm.index.tz else ttm.index
+                        monthly_close.index = monthly_close.index.tz_localize(None) if monthly_close.index.tz else monthly_close.index
+                        ttm_monthly = (ttm.resample("MS").last()
+                                          .reindex(monthly_close.index, method="ffill"))
+                        ps_hist = (monthly_close * shares / ttm_monthly).dropna()
+                        ps_hist = ps_hist[(ps_hist > 0) & (ps_hist < 500)]
+                        if len(ps_hist) >= 6:
+                            row["PS_3yr_Min"] = round(float(ps_hist.min()), 2)
+                            row["PS_3yr_Max"] = round(float(ps_hist.max()), 2)
+                            row["PS_3yr_Avg"] = round(float(ps_hist.mean()), 2)
+                            rng = row["PS_3yr_Max"] - row["PS_3yr_Min"]
+                            if rng > 0:
+                                row["PS_HistPos"] = round(
+                                    (ps - row["PS_3yr_Min"]) / rng * 100, 1)
+            except Exception:
+                pass
+    except Exception:
+        if t in _disk_cache:
+            row.update(_disk_cache[t])
+    cache_entry = None
+    if len(row) > 1:
+        cache_entry = {k: v for k, v in row.items()
+                       if k != "Ticker" and not isinstance(v, (list, dict))
+                       and v is not None}
+    return row, cache_entry, _rate_limited
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
 def fetch_fundamentals(tickers):
-    """Fetch analyst/fundamental data per ticker with rate-limit mitigation."""
-    results = []
+    """Fetch analyst/fundamental data per ticker using parallel threads."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
     _disk_cache = _load_fund_cache()
     _new_cache = {}
     _rate_limited = False
-    for idx, t in enumerate(tickers):
-        row = {"Ticker": t}
-        if idx > 0:
-            time.sleep(0.5)
-        try:
-            obj = yf.Ticker(t)
-            info = obj.info
-            _has_real_data = info and any(info.get(k) is not None for k in
-                ["currentPrice", "revenueGrowth", "marketCap", "freeCashflow"])
-            if not _has_real_data:
-                _rate_limited = True
-                if t in _disk_cache:
-                    row.update(_disk_cache[t])
-                results.append(row)
-                continue
 
-            target_mean = info.get("targetMeanPrice")
-            current = info.get("currentPrice") or info.get("regularMarketPrice")
-            upside = round((target_mean / current - 1) * 100, 1) if target_mean and current else None
-            short_pct = info.get("shortPercentOfFloat")
-            rev_growth = info.get("revenueGrowth")
-            earnings_ts = info.get("earningsDate") or info.get("earningsTimestamp")
-            next_earnings = None
-            if isinstance(earnings_ts, list) and earnings_ts:
-                try:
-                    next_earnings = datetime.fromtimestamp(earnings_ts[0]).strftime("%Y-%m-%d")
-                except Exception:
-                    pass
-            elif isinstance(earnings_ts, (int, float)) and earnings_ts:
-                try:
-                    next_earnings = datetime.fromtimestamp(earnings_ts).strftime("%Y-%m-%d")
-                except Exception:
-                    pass
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        futures = {pool.submit(_fetch_single_fundamental, t, _disk_cache): t for t in tickers}
+        results_map = {}
+        for future in as_completed(futures):
+            t = futures[future]
+            try:
+                row, cache_entry, rl = future.result()
+                results_map[t] = row
+                if cache_entry:
+                    _new_cache[t] = cache_entry
+                if rl:
+                    _rate_limited = True
+            except Exception:
+                results_map[t] = {"Ticker": t}
 
-            beta_val = info.get("beta")
-            beta_reliable = beta_val is not None and 0 < beta_val <= 5
-            row.update({
-                "Beta": beta_val,
-                "BetaReliable": beta_reliable,
-                "ShortPct": round(short_pct * 100, 1) if short_pct else None,
-                "MarketCap": info.get("marketCap"),
-                "TargetMean": round(target_mean, 2) if target_mean else None,
-                "TargetLow": info.get("targetLowPrice"),
-                "TargetHigh": info.get("targetHighPrice"),
-                "NumAnalysts": info.get("numberOfAnalystOpinions", 0),
-                "Recommendation": info.get("recommendationKey", ""),
-                "RevenueGrowth": round(rev_growth * 100, 1) if rev_growth else None,
-                "AnalystUpside": upside,
-                "NextEarnings": next_earnings,
-            })
-
-            ps = info.get("priceToSalesTrailing12Months")
-            ev = info.get("enterpriseToEbitda")
-            gm = info.get("grossMargins")
-            row["PS_Current"] = round(ps, 2) if ps else None
-            row["EV_EBITDA"] = round(ev, 1) if ev and ev > 0 else None
-            row["GrossMargin"] = round(gm * 100, 1) if gm else None
-
-            prof = info.get("profitMargins")
-            row["RevGrowthPct"] = round(rev_growth * 100, 1) if rev_growth is not None else None
-            row["Rule40"] = round(rev_growth * 100 + prof * 100, 1) if (rev_growth is not None and prof is not None) else None
-
-            fcf = info.get("freeCashflow")
-            total_cash = info.get("totalCash") or 0
-            row["FCFPositive"] = bool(fcf and fcf > 0)
-            row["FCFValue"] = fcf
-            row["CashRunwayMonths"] = (round((total_cash / abs(fcf)) * 12, 1)
-                                       if fcf and fcf < 0 and total_cash else None)
-
-            row["InsiderPct"] = round((info.get("heldPercentInsiders") or 0) * 100, 1)
-            row["InstitPct"] = round((info.get("heldPercentInstitutions") or 0) * 100, 1)
-            row["DaysToCover"] = info.get("shortRatio")
-
-            day_chg = info.get("regularMarketChangePercent")
-            row["DayChgPct"] = round(day_chg, 2) if day_chg is not None else None
-
-            post_chg = info.get("postMarketChangePercent")
-            pre_chg = info.get("preMarketChangePercent")
-            row["PostMktChg"] = round(post_chg, 2) if post_chg is not None else None
-            row["PreMktChg"] = round(pre_chg, 2) if pre_chg is not None else None
-
-            # Overnight: total move from regular close to latest extended-hours price
-            reg_price = info.get("regularMarketPrice")
-            post_price = info.get("postMarketPrice")
-            pre_price = info.get("preMarketPrice")
-            ext_price = pre_price or post_price  # pre-market takes priority (more recent)
-            if ext_price and reg_price and reg_price > 0:
-                row["OvernightChg"] = round((ext_price / reg_price - 1) * 100, 2)
-            else:
-                row["OvernightChg"] = None
-
-            # Historical P/S range (3 years)
-            shares = info.get("sharesOutstanding")
-            if shares and ps:
-                try:
-                    hist = yf.download(t, period="3y", interval="1mo",
-                                       progress=False, auto_adjust=True)
-                    q_fin = getattr(obj, "quarterly_income_stmt", None)
-                    if q_fin is None or (hasattr(q_fin, "empty") and q_fin.empty):
-                        q_fin = getattr(obj, "quarterly_financials", None)
-                    rev_row = None
-                    if q_fin is not None and not q_fin.empty:
-                        for name in ["Total Revenue", "Revenue", "Net Revenue"]:
-                            if name in q_fin.index:
-                                rev_row = name
-                                break
-                    if not hist.empty and rev_row:
-                        monthly_close = hist["Close"].squeeze()
-                        rev_q = q_fin.loc[rev_row].sort_index()
-                        ttm = rev_q.rolling(4).sum().dropna()
-                        if not ttm.empty:
-                            ttm.index = ttm.index.tz_localize(None) if ttm.index.tz else ttm.index
-                            monthly_close.index = monthly_close.index.tz_localize(None) if monthly_close.index.tz else monthly_close.index
-                            ttm_monthly = (ttm.resample("MS").last()
-                                              .reindex(monthly_close.index, method="ffill"))
-                            ps_hist = (monthly_close * shares / ttm_monthly).dropna()
-                            ps_hist = ps_hist[(ps_hist > 0) & (ps_hist < 500)]
-                            if len(ps_hist) >= 6:
-                                row["PS_3yr_Min"] = round(float(ps_hist.min()), 2)
-                                row["PS_3yr_Max"] = round(float(ps_hist.max()), 2)
-                                row["PS_3yr_Avg"] = round(float(ps_hist.mean()), 2)
-                                rng = row["PS_3yr_Max"] - row["PS_3yr_Min"]
-                                if rng > 0:
-                                    row["PS_HistPos"] = round(
-                                        (ps - row["PS_3yr_Min"]) / rng * 100, 1)
-                except Exception:
-                    pass
-        except Exception:
-            if t in _disk_cache:
-                row.update(_disk_cache[t])
-        if len(row) > 1:
-            _new_cache[t] = {k: v for k, v in row.items()
-                            if k != "Ticker" and not isinstance(v, (list, dict))
-                            and v is not None}
-        results.append(row)
+    # Preserve original ticker order
+    results = [results_map.get(t, {"Ticker": t}) for t in tickers]
 
     if _new_cache and not _rate_limited:
         _save_fund_cache(_new_cache)
@@ -589,102 +615,100 @@ def fetch_fundamentals(tickers):
 
 # ── Extras (news, insider, earnings) ─────────────────────────────────────────
 
-@st.cache_data(ttl=1800, show_spinner=False)
-def fetch_extras(tickers):
-    results = []
-    for idx, t in enumerate(tickers):
-        row = {"Ticker": t, "InsiderSignal": "N/A", "InsiderNet": 0,
-               "EarningsBeats": None, "Headlines": [], "InsiderBuys": []}
-        if idx > 0:
-            time.sleep(0.3)
+def _fetch_single_extra(t):
+    """Fetch news, insider, earnings for a single ticker. Used by ThreadPoolExecutor."""
+    row = {"Ticker": t, "InsiderSignal": "N/A", "InsiderNet": 0,
+           "EarningsBeats": None, "Headlines": [], "InsiderBuys": []}
+    try:
+        obj = yf.Ticker(t)
         try:
-            obj = yf.Ticker(t)
-            try:
-                raw_news = obj.news or []
-                headlines = []
-                for n in raw_news[:5]:
-                    title = (n.get("title") or (n.get("content") or {}).get("title", ""))
-                    pub = (n.get("publisher") or
-                           (n.get("content") or {}).get("provider", {}).get("displayName", ""))
-                    ts = n.get("providerPublishTime") or n.get("pubDate", "")
-                    if title:
-                        try:
-                            date_str = datetime.fromtimestamp(int(ts)).strftime("%b %d") if isinstance(ts, (int, float)) else str(ts)[:10]
-                        except Exception:
-                            date_str = ""
-                        headlines.append({"date": date_str, "title": title, "pub": pub})
-                row["Headlines"] = headlines
-            except Exception:
-                pass
-            try:
-                ins = obj.insider_transactions
-                if ins is not None and not ins.empty:
-                    cutoff = pd.Timestamp.now() - pd.Timedelta(days=90)
-                    if isinstance(ins.index, pd.DatetimeIndex):
-                        recent = ins[ins.index >= cutoff]
-                    else:
-                        date_col = next((c for c in ins.columns if "date" in c.lower()), None)
-                        if date_col:
-                            ins[date_col] = pd.to_datetime(ins[date_col], errors="coerce")
-                            recent = ins[ins[date_col] >= cutoff]
-                        else:
-                            recent = ins
-                    tx_col = next((c for c in recent.columns if "text" in c.lower()), None)
-                    if tx_col is None:
-                        tx_col = next((c for c in recent.columns if "transaction" in c.lower()), None)
-                    if tx_col is not None:
-                        tx = recent[tx_col].astype(str).str.lower()
-                        buy_mask = tx.str.contains("buy|purchase|acquisition", na=False)
-                        sell_mask = tx.str.contains("sell|sale|disposition", na=False)
-                        buys = int(buy_mask.sum())
-                        sells = int(sell_mask.sum())
-                        buy_details = []
-                        if buys > 0:
-                            buy_rows = recent[buy_mask]
-                            for _, br in buy_rows.iterrows():
-                                detail = {}
-                                detail["insider"] = br.get("Insider", "Unknown")
-                                detail["position"] = br.get("Position", "")
-                                date_val = br.get("Start Date", "")
-                                if pd.notna(date_val):
-                                    try:
-                                        detail["date"] = pd.to_datetime(date_val).strftime("%b %d")
-                                    except Exception:
-                                        detail["date"] = str(date_val)[:10]
-                                else:
-                                    detail["date"] = ""
-                                val = br.get("Value", 0)
-                                detail["value"] = float(val) if pd.notna(val) else 0
-                                shares_val = br.get("Shares", 0)
-                                detail["shares"] = int(shares_val) if pd.notna(shares_val) else 0
-                                buy_details.append(detail)
-                        row["InsiderBuys"] = buy_details
-                    else:
-                        buys, sells = 0, 0
-                    net = int(buys) - int(sells)
-                    row["InsiderNet"] = net
-                    row["InsiderSignal"] = ("Buying" if net > 0
-                                            else "Selling" if net < 0 else "Neutral")
-            except Exception:
-                pass
-            try:
-                eh = obj.earnings_history
-                if eh is not None and not eh.empty:
-                    cols_lower = [c.lower() for c in eh.columns]
-                    rep_col = next((eh.columns[i] for i, c in enumerate(cols_lower)
-                                    if "report" in c or "actual" in c), None)
-                    est_col = next((eh.columns[i] for i, c in enumerate(cols_lower)
-                                    if "estimate" in c), None)
-                    if rep_col and est_col:
-                        recent4 = eh.tail(4)
-                        beats_count = int((recent4[rep_col] > recent4[est_col]).sum())
-                        row["EarningsBeats"] = f"{beats_count}/4"
-            except Exception:
-                pass
+            raw_news = obj.news or []
+            headlines = []
+            for n in raw_news[:5]:
+                title = (n.get("title") or (n.get("content") or {}).get("title", ""))
+                pub = (n.get("publisher") or
+                       (n.get("content") or {}).get("provider", {}).get("displayName", ""))
+                ts = n.get("providerPublishTime") or n.get("pubDate", "")
+                if title:
+                    try:
+                        date_str = datetime.fromtimestamp(int(ts)).strftime("%b %d") if isinstance(ts, (int, float)) else str(ts)[:10]
+                    except Exception:
+                        date_str = ""
+                    headlines.append({"date": date_str, "title": title, "pub": pub})
+            row["Headlines"] = headlines
         except Exception:
             pass
-        results.append(row)
-    return pd.DataFrame(results)
+        try:
+            ins = obj.insider_transactions
+            if ins is not None and not ins.empty:
+                cutoff = pd.Timestamp.now() - pd.Timedelta(days=90)
+                if isinstance(ins.index, pd.DatetimeIndex):
+                    recent = ins[ins.index >= cutoff]
+                else:
+                    date_col = next((c for c in ins.columns if "date" in c.lower()), None)
+                    if date_col:
+                        ins[date_col] = pd.to_datetime(ins[date_col], errors="coerce")
+                        recent = ins[ins[date_col] >= cutoff]
+                    else:
+                        recent = ins
+                tx_col = next((c for c in recent.columns if "text" in c.lower()), None)
+                if tx_col is None:
+                    tx_col = next((c for c in recent.columns if "transaction" in c.lower()), None)
+                if tx_col is not None:
+                    tx = recent[tx_col].astype(str).str.lower()
+                    buy_mask = tx.str.contains("buy|purchase|acquisition", na=False)
+                    sell_mask = tx.str.contains("sell|sale|disposition", na=False)
+                    buys = int(buy_mask.sum())
+                    sells = int(sell_mask.sum())
+                    buy_details = []
+                    if buys > 0:
+                        buy_rows = recent[buy_mask]
+                        for _, br in buy_rows.iterrows():
+                            detail = {}
+                            detail["insider"] = br.get("Insider", "Unknown")
+                            detail["position"] = br.get("Position", "")
+                            date_val = br.get("Start Date", "")
+                            if pd.notna(date_val):
+                                try:
+                                    detail["date"] = pd.to_datetime(date_val).strftime("%b %d")
+                                except Exception:
+                                    detail["date"] = str(date_val)[:10]
+                            else:
+                                detail["date"] = ""
+                            val = br.get("Value", 0)
+                            detail["value"] = float(val) if pd.notna(val) else 0
+                            shares_val = br.get("Shares", 0)
+                            detail["shares"] = int(shares_val) if pd.notna(shares_val) else 0
+                            buy_details.append(detail)
+                    row["InsiderBuys"] = buy_details
+                else:
+                    buys, sells = 0, 0
+                net = int(buys) - int(sells)
+                row["InsiderNet"] = net
+                row["InsiderSignal"] = ("Buying" if net > 0
+                                        else "Selling" if net < 0 else "Neutral")
+        except Exception:
+            pass
+        # EarningsBeats removed — minor signal, heavy API call per ticker
+    except Exception:
+        pass
+    return row
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def fetch_extras(tickers):
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    results_map = {}
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        futures = {pool.submit(_fetch_single_extra, t): t for t in tickers}
+        for future in as_completed(futures):
+            t = futures[future]
+            try:
+                results_map[t] = future.result()
+            except Exception:
+                results_map[t] = {"Ticker": t, "InsiderSignal": "N/A", "InsiderNet": 0,
+                                  "EarningsBeats": None, "Headlines": [], "InsiderBuys": []}
+    return pd.DataFrame([results_map.get(t, {"Ticker": t}) for t in tickers])
 
 
 # ── StockTwits Sentiment ─────────────────────────────────────────────────────

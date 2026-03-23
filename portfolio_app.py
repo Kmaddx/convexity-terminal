@@ -525,50 +525,59 @@ with st.sidebar:
 # ── Load all data once ───────────────────────────────────────────────────────
 
 with st.status("◣ Loading Convexity Terminal...", expanded=True) as _status:
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
     _status.update(label="◣ Scanning markets...", state="running")
-    st.write("⚡ Fetching price data...")
-    df_price = fetch_price_data(st.session_state.tickers)
 
-    if df_price.empty:
-        _status.update(label="◣ Failed", state="error")
-        st.error("No data. Check internet connection.")
-        st.stop()
+    # Phase 1: Price data first (needed for filtering), plus independent fetches in parallel
+    st.write("Fetching price data + market environment...")
+    _all_etf_tickers = get_all_etf_tickers(st.session_state.themes)
+    _anthropic_key = _get_anthropic_key()
+    _tickers_tuple = tuple(st.session_state.tickers)
+    _etf_tuple = tuple(_all_etf_tickers)
 
-    st.write("📊 Loading fundamentals & valuation...")
-    df_fund = fetch_fundamentals(st.session_state.tickers)
+    with ThreadPoolExecutor(max_workers=8) as _pool:
+        _f_price = _pool.submit(fetch_price_data, st.session_state.tickers)
+        _f_fund = _pool.submit(fetch_fundamentals, st.session_state.tickers)
+        _f_spy_ret = _pool.submit(fetch_spy_returns)
+        _f_spy_daily = _pool.submit(fetch_spy_daily)
+        _f_env = _pool.submit(fetch_market_environment)
+        _f_headlines = _pool.submit(fetch_market_headlines)
+        _f_etf = _pool.submit(fetch_etf_benchmark_data, _etf_tuple) if _all_etf_tickers else None
+        _f_extras = _pool.submit(fetch_extras, _tickers_tuple)
+        _f_st = _pool.submit(fetch_stocktwits, _tickers_tuple)
 
-    spy_ret = fetch_spy_returns()
-    spy_close, spy_daily_ret = fetch_spy_daily()
+        # Collect results as they complete
+        df_price = _f_price.result()
+        if df_price.empty:
+            _status.update(label="◣ Failed", state="error")
+            st.error("No data. Check internet connection.")
+            st.stop()
 
-    st.write("🌐 Scanning market environment...")
-    market_env = fetch_market_environment()
+        st.write("Loading fundamentals & signals...")
+        df_fund = _f_fund.result()
+        spy_ret = _f_spy_ret.result()
+        spy_close, spy_daily_ret = _f_spy_daily.result()
+        market_env = _f_env.result()
+        _market_headlines = _f_headlines.result()
+        df_etf = _f_etf.result() if _f_etf else pd.DataFrame()
+        df_extras = _f_extras.result()
+        st_data = _f_st.result()
+
+    st.write("Calculating scores...")
     env_total, env_pillars, env_decision, env_decision_sub, env_warnings, env_tailwinds = calc_market_env_score(market_env)
-    _market_headlines = fetch_market_headlines()
-    _anthropic_key_early = _get_anthropic_key()
+
     _market_ai_summary = ai_market_summary(tuple(
         (h["title"], h["source"]) for h in _market_headlines
-    ), _anthropic_key_early) if _anthropic_key_early and _market_headlines else None
+    ), _anthropic_key) if _anthropic_key and _market_headlines else None
 
-    st.write("💪 Calculating relative strength...")
-    df_rs = calc_downday_rs(tuple(st.session_state.tickers), spy_close, spy_daily_ret)
-
-    st.write("📡 Fetching theme benchmarks...")
-    _all_etf_tickers = get_all_etf_tickers(st.session_state.themes)
-    df_etf = fetch_etf_benchmark_data(tuple(_all_etf_tickers)) if _all_etf_tickers else pd.DataFrame()
+    df_rs = calc_downday_rs(_tickers_tuple, spy_close, spy_daily_ret)
 
     df_price = df_price[df_price["Ticker"].isin(selected)].copy()
 
-    st.write("🔍 Loading news & insider signals...")
-    df_extras = fetch_extras(tuple(st.session_state.tickers))
-
-    st.write("💬 Loading sentiment...")
-    st_data = fetch_stocktwits(tuple(st.session_state.tickers))
-
     # AI headline sentiment (uses headlines already fetched in df_extras)
     _ai_sentiment = {}
-    _anthropic_key = _get_anthropic_key()
     if _anthropic_key and not df_extras.empty:
-        st.write("🧠 Scoring headlines with AI...")
         _headlines_map = {}
         for _, _erow in df_extras.iterrows():
             _t = _erow.get("Ticker")
@@ -585,7 +594,7 @@ with st.status("◣ Loading Convexity Terminal...", expanded=True) as _status:
 # ── Merge all data ──
 df_all = df_price.merge(df_fund, on="Ticker", how="left")
 df_all = df_all.merge(
-    df_extras[["Ticker", "InsiderSignal", "InsiderNet", "InsiderBuys", "EarningsBeats"]],
+    df_extras[["Ticker", "InsiderSignal", "InsiderNet", "InsiderBuys"]],
     on="Ticker", how="left"
 )
 df_all["ST_BullPct"] = df_all["Ticker"].map(lambda t: st_data.get(t, {}).get("bull_pct"))
@@ -649,7 +658,7 @@ _expected_cols = {
     "RelVol": None,
     # Extras
     "NextEarnings": None, "InsiderSignal": None, "InsiderNet": 0,
-    "InsiderBuys": 0, "EarningsBeats": None, "Headlines": None,
+    "InsiderBuys": 0, "Headlines": None,
     # Sentiment
     "ST_BullPct": None, "ST_MsgCount": 0,
     "AI_HeadlineScore": None, "AI_HeadlineSummary": "",
@@ -843,7 +852,6 @@ if deep_dive_ticker != "--" and deep_dive_ticker in df_all["Ticker"].values:
             if _ai_summary:
                 st.caption(f"AI: {_ai_summary}")
             st.markdown(f"- Insider: {t_row.get('InsiderSignal', 'N/A')}")
-            st.markdown(f"- Beats: {t_row.get('EarningsBeats', 'N/A')}")
 
     # Price chart for deep dive ticker
     try:
@@ -905,8 +913,8 @@ if deep_dive_ticker != "--" and deep_dive_ticker in df_all["Ticker"].values:
     grad_divider()
 
 # ── TABS (visible at top, right after KPI row) ──────────────────────────────
-tab_dash, tab_conv, tab_themes, tab_charts, tab_sig, tab_scan = st.tabs([
-    "Dashboard", "Convexity", "Themes", "Charts", "Signals", "Scanner",
+tab_dash, tab_conv, tab_themes, tab_str, tab_charts, tab_sig, tab_scan = st.tabs([
+    "Dashboard", "Convexity", "Themes", "Strength", "Charts", "Signals", "Scanner",
 ])
 
 # Stage color map (used across multiple tabs)
@@ -956,10 +964,7 @@ with tab_dash:
             _sections["MARKET READ"] = "\n".join(_current_lines).strip()
 
         # Render styled HTML
-        _section_icons = {
-            "MARKET READ": "\U0001f4ca", "KEY CATALYSTS THIS WEEK": "\U0001f4c5",
-            "KEY CATALYSTS": "\U0001f4c5", "WATCH FOR": "\u26a0\ufe0f",
-        }
+        _section_icons = {}
         _ai_html = (
             '<div style="background:#0d1117;border:1px solid #30363d;border-radius:10px;'
             'padding:16px 20px;margin-bottom:12px;">'
@@ -967,7 +972,7 @@ with tab_dash:
             'letter-spacing:1px;margin-bottom:10px;">AI Market Intelligence</div>'
         )
         for _sname, _sbody in _sections.items():
-            _icon = _section_icons.get(_sname, "\U0001f4cc")
+            _icon = _section_icons.get(_sname, "")
             # Convert markdown bold to HTML bold and list items
             _body_html = _sbody.replace("**", "<b>", 1)
             while "**" in _body_html:
@@ -976,7 +981,7 @@ with tab_dash:
             _ai_html += (
                 f'<div style="margin-bottom:12px;">'
                 f'<div style="font-size:0.75rem;font-weight:600;color:#58a6ff;'
-                f'margin-bottom:4px;">{_icon} {_sname}</div>'
+                f'margin-bottom:4px;">{(_icon + " ") if _icon else ""}{_sname}</div>'
                 f'<div style="font-size:0.8rem;color:#c9d1d9;line-height:1.5;">'
                 f'{_body_html}</div></div>'
             )
@@ -1325,6 +1330,42 @@ with tab_dash:
     st.download_button("Export Overview CSV",
                        overview_disp.drop(columns=["30d"], errors="ignore").to_csv(index=False),
                        "portfolio_overview.csv", "text/csv", key="dl_overview")
+
+    # ── Portfolio Map — RSI vs 52-Week Position ──
+    grad_divider()
+    section_header("Portfolio Map — RSI vs 52-Week Position", "#f39c12")
+    st.caption("Bubble size = ATR volatility. Bottom-left = weak. Top-right = strong. Bottom-right = pullback opportunity.")
+    fig5 = go.Figure()
+    for _, row in df_price.iterrows():
+        vs200_str = f"{row['vsMA200']:+.1f}%" if row["vsMA200"] is not None else "N/A"
+        fig5.add_trace(go.Scatter(
+            x=[row["Pos52"]], y=[row["RSI"]],
+            mode="markers+text", text=[row["Ticker"]], textposition="top center",
+            marker=dict(size=row["ATR_pct"]*4, color=pos_color(row["Pos52"]),
+                        line=dict(width=1, color="#0d1117")),
+            hovertemplate=(
+                f"<b>{row['Ticker']}</b><br>Price: ${row['Price']}<br>"
+                f"RSI: {row['RSI']}<br>52wk Pos: {row['Pos52']:.1f}%<br>"
+                f"ATR%: {row['ATR_pct']}<br>vs MA50: {row['vsMA50']:+.1f}%<br>"
+                f"vs MA200: {vs200_str}<extra></extra>"
+            ),
+            showlegend=False,
+        ))
+    fig5.add_hline(y=70, line_dash="dash", line_color="#e74c3c", line_width=0.8,
+                   annotation_text="Overbought", annotation_font_color="#e74c3c")
+    fig5.add_hline(y=30, line_dash="dash", line_color="#2ecc71", line_width=0.8,
+                   annotation_text="Oversold", annotation_font_color="#2ecc71")
+    fig5.add_vline(x=50, line_dash="dot", line_color="#555", line_width=0.8)
+    for (x, y, lbl) in [(82,78,"STRONG"),(12,78,"RECOVERING"),(82,25,"PULLBACK"),(12,25,"WEAK")]:
+        fig5.add_annotation(x=x, y=y, text=lbl, showarrow=False,
+                            font=dict(color="#555", size=11, family="monospace"))
+    fig5.update_layout(
+        height=500,
+        xaxis=dict(range=[-5,105], title="52-Week Range Position (%)", gridcolor="#21262d"),
+        yaxis=dict(range=[15,90], title="RSI (14)", gridcolor="#21262d"),
+        margin=dict(l=60,r=20,t=20,b=60), **DARK,
+    )
+    st.plotly_chart(fig5, use_container_width=True)
 
     grad_divider()
     st.caption(f"Data as of {_data_ts}")
@@ -1987,10 +2028,10 @@ with tab_themes:
     else:
         st.info("SPY or ETF data not available for momentum trends.")
 
-    # ── (c) Theme Scores (holdings only, with ETF context) ──
+    # ── (c) Theme Pillar Breakdown (holdings only) ──
     grad_divider()
-    st.markdown("#### Theme Scores (Your Holdings)")
-    st.caption("Convexity and momentum scores for themes where you hold tickers. ETF 3m return shown for context.")
+    st.markdown("#### Theme Pillar Breakdown")
+    st.caption("Average four-pillar scores for themes where you hold tickers. Shows where each theme is strong or weak.")
 
     theme_score_rows = []
     for theme_name in _all_theme_names:
@@ -1999,99 +2040,94 @@ with tab_themes:
         if not active:
             continue
         sub = df_theme[df_theme["Ticker"].isin(active)]
-        avg_conv = round(sub["ConvexityScore"].mean(), 1)
-        avg_mom  = round(sub["MomentumScore"].mean(), 1)
-        # ETF 3m return for context
-        etf_list = _etf_tickers_map.get(theme_name, [])
-        etf_sub = df_etf[df_etf["Ticker"].isin(etf_list)] if not df_etf.empty else pd.DataFrame()
-        etf_3m = round(etf_sub["Ret3m"].dropna().mean(), 1) if not etf_sub.empty and etf_sub["Ret3m"].notna().any() else None
         theme_score_rows.append({
             "Theme": theme_name,
             "Tickers": len(active),
-            "Avg Convexity": avg_conv,
-            "Avg Momentum": avg_mom,
-            "ETF 3m Ret": etf_3m,
+            "Technical": round(sub["PillarTech"].mean(), 1),
+            "Fundamental": round(sub["PillarFund"].mean(), 1),
+            "Thematic": round(sub["PillarTheme"].mean(), 1),
+            "Narrative": round(sub["PillarNarr"].mean(), 1),
+            "Convexity": round(sub["ConvexityScore"].mean(), 1),
             "Members": ", ".join(active),
         })
 
     if theme_score_rows:
-        df_scores = pd.DataFrame(theme_score_rows).sort_values("Avg Convexity", ascending=False)
+        df_scores = pd.DataFrame(theme_score_rows).sort_values("Convexity", ascending=False)
 
+        _pillar_colors = {
+            "Technical": "#3498db", "Fundamental": "#2ecc71",
+            "Thematic": "#9b59b6", "Narrative": "#f39c12",
+        }
         fig_th = go.Figure()
-        fig_th.add_trace(go.Bar(
-            name="Convexity", x=df_scores["Theme"], y=df_scores["Avg Convexity"],
-            marker_color="#9b59b6",
-            hovertemplate="<b>%{x}</b><br>Convexity: %{y:.1f}<extra></extra>",
-        ))
-        fig_th.add_trace(go.Bar(
-            name="Momentum", x=df_scores["Theme"], y=df_scores["Avg Momentum"],
-            marker_color="#27ae60",
-            hovertemplate="<b>%{x}</b><br>Momentum: %{y:.1f}<extra></extra>",
-        ))
-        # Add ETF 3m return as line for context
-        if df_scores["ETF 3m Ret"].notna().any():
-            fig_th.add_trace(go.Scatter(
-                name="ETF 3m Ret (%)", x=df_scores["Theme"], y=df_scores["ETF 3m Ret"],
-                mode="markers+lines", marker=dict(size=8, color="#f39c12"),
-                line=dict(dash="dot", color="#f39c12"),
-                yaxis="y2",
-                hovertemplate="<b>%{x}</b><br>ETF 3m: %{y:+.1f}%<extra></extra>",
+        for pillar, color in _pillar_colors.items():
+            fig_th.add_trace(go.Bar(
+                name=pillar, x=df_scores["Theme"], y=df_scores[pillar],
+                marker_color=color,
+                hovertemplate="<b>%{x}</b><br>" + pillar + ": %{y:.0f}/100<extra></extra>",
             ))
         fig_th.update_layout(
-            barmode="group", height=400,
-            yaxis_title="Avg Score",
-            yaxis2=dict(title="ETF 3m Return (%)", overlaying="y", side="right",
-                        showgrid=False, title_font=dict(color="#f39c12"),
-                        tickfont=dict(color="#f39c12")),
+            barmode="group", height=420,
+            yaxis_title="Pillar Score (0-100)",
+            yaxis=dict(range=[0, 100]),
             legend=dict(orientation="h", yanchor="bottom", y=1.02),
-            margin=dict(l=40, r=60, t=50, b=40), **DARK,
+            margin=dict(l=40, r=30, t=50, b=40), **DARK,
         )
-        fig_th.add_hline(y=50, line_dash="dot", line_color="#555")
+        fig_th.add_hline(y=50, line_dash="dot", line_color="#555", annotation_text="Neutral",
+                         annotation_position="bottom right", annotation_font_color="#666")
         st.plotly_chart(fig_th, use_container_width=True)
 
-    # ── (d) Theme Drilldown ──
+    # ── (d) Theme Drilldown — flat table grouped by theme ──
     grad_divider()
     st.markdown("#### Theme Drilldown")
+    st.caption("All holdings grouped by theme with ETF benchmark context. Sorted by convexity within each theme.")
+
+    _drill_rows = []
     for theme_name in _all_theme_names:
         user_tks = _user_tickers_map.get(theme_name, [])
         members = [t for t in user_tks if t in df_theme["Ticker"].values]
         if not members:
             continue
-        sub = df_theme[df_theme["Ticker"].isin(members)].sort_values("ConvexityScore", ascending=False)
         etf_list = _etf_tickers_map.get(theme_name, [])
         etf_sub = df_etf[df_etf["Ticker"].isin(etf_list)] if not df_etf.empty else pd.DataFrame()
+        etf_1m = round(etf_sub["Ret1m"].dropna().mean(), 1) if not etf_sub.empty and etf_sub["Ret1m"].notna().any() else None
+        etf_3m = round(etf_sub["Ret3m"].dropna().mean(), 1) if not etf_sub.empty and etf_sub["Ret3m"].notna().any() else None
 
-        # Build expander label
-        avg_conv = round(sub["ConvexityScore"].mean(), 0)
-        avg_mom = round(sub["MomentumScore"].mean(), 0)
-        with st.expander(f"**{theme_name}** ({len(members)} tickers)  |  Convexity: {avg_conv:.0f}  |  Momentum: {avg_mom:.0f}  |  ETFs: {', '.join(etf_list)}"):
-            # ETF benchmark performance at top
-            if not etf_sub.empty:
-                etf_disp = etf_sub[["Ticker", "Price", "Ret1m", "Ret3m", "RetYTD", "Ret1y"]].copy()
-                etf_disp = etf_disp.rename(columns={
-                    "Ret1m": "1m Ret", "Ret3m": "3m Ret", "RetYTD": "YTD Ret", "Ret1y": "1y Ret",
-                })
-                st.markdown("**ETF Benchmark:**")
-                etf_styled = etf_disp.style.format({
-                    "Price": "${:.2f}",
-                    "1m Ret": lambda x: f"{x:+.1f}%" if pd.notna(x) else "N/A",
-                    "3m Ret": lambda x: f"{x:+.1f}%" if pd.notna(x) else "N/A",
-                    "YTD Ret": lambda x: f"{x:+.1f}%" if pd.notna(x) else "N/A",
-                    "1y Ret": lambda x: f"{x:+.1f}%" if pd.notna(x) else "N/A",
-                }, na_rep="N/A")
-                st.dataframe(etf_styled, width="stretch", hide_index=True)
-                st.markdown("**Your Picks:**")
-
-            drill = sub[["Ticker", "Price", "RSI", "Pos52", "ConvexityScore", "MomentumScore", "Ret1m", "Ret3m"]].copy()
-            drill = drill.rename(columns={
-                "Pos52": "52wk Pos", "ConvexityScore": "Convexity",
-                "MomentumScore": "Momentum", "Ret1m": "1m Ret", "Ret3m": "3m Ret",
+        sub = df_theme[df_theme["Ticker"].isin(members)].sort_values("ConvexityScore", ascending=False)
+        for _, r in sub.iterrows():
+            _r1m = r.get("Ret1m")
+            _r3m = r.get("Ret3m")
+            _drill_rows.append({
+                "Theme": theme_name,
+                "Ticker": r["Ticker"],
+                "Price": r.get("Price"),
+                "RSI": r.get("RSI"),
+                "52wk Pos": r.get("Pos52"),
+                "Convexity": r.get("ConvexityScore"),
+                "Momentum": r.get("MomentumScore"),
+                "1m Ret": _r1m,
+                "3m Ret": _r3m,
+                "vs ETF 1m": round(_r1m - etf_1m, 1) if pd.notna(_r1m) and etf_1m is not None else None,
+                "ETF 1m": etf_1m,
+                "ETF 3m": etf_3m,
             })
-            dr_grad = [c for c in ["Convexity", "Momentum"] if drill[c].notna().any()]
-            dr_styled = drill.style
-            if dr_grad:
-                dr_styled = dr_styled.background_gradient(subset=dr_grad, cmap="RdYlGn", vmin=20, vmax=80)
-            dr_styled = dr_styled.format({
+
+    if _drill_rows:
+        df_drill = pd.DataFrame(_drill_rows)
+
+        def _drill_color_vs_etf(val):
+            if pd.isna(val): return ""
+            if val >= 5: return "background-color: #1a3a2a; color: #2ecc71"
+            if val >= 0: return "background-color: #1a3a2a; color: #8ade8a"
+            if val <= -5: return "background-color: #5b2c2c; color: #ff6b6b"
+            return "background-color: #3a2a1a; color: #f39c12"
+
+        _drill_grad = [c for c in ["Convexity", "Momentum"] if df_drill[c].notna().any()]
+        drill_styled = df_drill.style
+        if _drill_grad:
+            drill_styled = drill_styled.background_gradient(subset=_drill_grad, cmap="RdYlGn", vmin=20, vmax=80)
+        drill_styled = (drill_styled
+            .map(_drill_color_vs_etf, subset=["vs ETF 1m"])
+            .format({
                 "Price": "${:.2f}",
                 "RSI": "{:.0f}",
                 "52wk Pos": "{:.0f}%",
@@ -2099,8 +2135,12 @@ with tab_themes:
                 "Momentum": "{:.0f}",
                 "1m Ret": lambda x: f"{x:+.1f}%" if pd.notna(x) else "N/A",
                 "3m Ret": lambda x: f"{x:+.1f}%" if pd.notna(x) else "N/A",
+                "vs ETF 1m": lambda x: f"{x:+.1f}%" if pd.notna(x) else "--",
+                "ETF 1m": lambda x: f"{x:+.1f}%" if pd.notna(x) else "--",
+                "ETF 3m": lambda x: f"{x:+.1f}%" if pd.notna(x) else "--",
             }, na_rep="N/A")
-            st.dataframe(dr_styled, width="stretch", hide_index=True)
+        )
+        st.dataframe(drill_styled, width="stretch", hide_index=True, height=min(len(df_drill) * 38 + 40, 600))
 
     # Untagged tickers
     all_themed = set()
@@ -2195,46 +2235,9 @@ with tab_charts:
         except Exception:
             st.caption(f"{chart_ticker}: chart unavailable")
 
-    grad_divider()
+# ── TAB: Strength ────────────────────────────────────────────────────────────
 
-    # Portfolio Map — RSI vs 52-Week Position (moved from Dashboard)
-    section_header("Portfolio Map — RSI vs 52-Week Position", "#f39c12")
-    st.caption("Bubble size = ATR volatility. Bottom-left = weak. Top-right = strong. Bottom-right = pullback opportunity.")
-    fig5 = go.Figure()
-    for _, row in df_price.iterrows():
-        vs200_str = f"{row['vsMA200']:+.1f}%" if row["vsMA200"] is not None else "N/A"
-        fig5.add_trace(go.Scatter(
-            x=[row["Pos52"]], y=[row["RSI"]],
-            mode="markers+text", text=[row["Ticker"]], textposition="top center",
-            marker=dict(size=row["ATR_pct"]*4, color=pos_color(row["Pos52"]),
-                        line=dict(width=1, color="#0d1117")),
-            hovertemplate=(
-                f"<b>{row['Ticker']}</b><br>Price: ${row['Price']}<br>"
-                f"RSI: {row['RSI']}<br>52wk Pos: {row['Pos52']:.1f}%<br>"
-                f"ATR%: {row['ATR_pct']}<br>vs MA50: {row['vsMA50']:+.1f}%<br>"
-                f"vs MA200: {vs200_str}<extra></extra>"
-            ),
-            showlegend=False,
-        ))
-    fig5.add_hline(y=70, line_dash="dash", line_color="#e74c3c", line_width=0.8,
-                   annotation_text="Overbought", annotation_font_color="#e74c3c")
-    fig5.add_hline(y=30, line_dash="dash", line_color="#2ecc71", line_width=0.8,
-                   annotation_text="Oversold", annotation_font_color="#2ecc71")
-    fig5.add_vline(x=50, line_dash="dot", line_color="#555", line_width=0.8)
-    for (x, y, lbl) in [(82,78,"STRONG"),(12,78,"RECOVERING"),(82,25,"PULLBACK"),(12,25,"WEAK")]:
-        fig5.add_annotation(x=x, y=y, text=lbl, showarrow=False,
-                            font=dict(color="#555", size=11, family="monospace"))
-    fig5.update_layout(
-        height=500,
-        xaxis=dict(range=[-5,105], title="52-Week Range Position (%)", gridcolor="#21262d"),
-        yaxis=dict(range=[15,90], title="RSI (14)", gridcolor="#21262d"),
-        margin=dict(l=60,r=20,t=20,b=60), **DARK,
-    )
-    st.plotly_chart(fig5, use_container_width=True)
-
-    grad_divider()
-
-    # ── Relative Strength — Down-Day Analysis ──
+with tab_str:
     section_header("Relative Strength — Who's Holding Up?", "#2ecc71")
     st.caption(
         "Stocks that refuse to go lower on market down-days are being accumulated. "
@@ -2289,6 +2292,7 @@ with tab_charts:
         st.plotly_chart(fig_rs, use_container_width=True)
 
         # ── Down-Day Win Rate scatter ──
+        grad_divider()
         st.markdown("##### Down-Day Behaviour Detail")
         fig_dd = go.Figure()
         for _, row in rs_view.iterrows():
@@ -2320,6 +2324,7 @@ with tab_charts:
         st.plotly_chart(fig_dd, use_container_width=True)
 
         # ── RS Table (colour-coded) ──
+        grad_divider()
         rs_tbl = rs_view[["Ticker", "RS_Score", "RS_Rank", "RS_Label", "DownDayWinRate",
                           "DownDayRS", "RecentDDExcess", "EarlyBottom", "DaysSinceLow",
                           "RS_1m", "RS_3m"]].copy()
@@ -2562,7 +2567,6 @@ with tab_sig:
             "RevenueGrowth": row.get("RevenueGrowth"), "MarketCap": row.get("MarketCap"),
             "RSI": row["RSI"], "ATR_pct": row["ATR_pct"], "RelVol": row.get("RelVol"),
             "InsiderSignal": row.get("InsiderSignal","N/A"),
-            "EarningsBeats": row.get("EarningsBeats"),
             "NextEarnings": row.get("NextEarnings"),
             "BullPct": sent.get("bull_pct"), "MsgCount": sent.get("msg_count", 0),
         })
@@ -2571,13 +2575,12 @@ with tab_sig:
     tbl["Recommendation"] = tbl["Recommendation"].apply(fmt_rec)
     tbl["MarketCap"]      = tbl["MarketCap"].apply(fmt_mcap)
     tbl["NextEarnings"]   = tbl["NextEarnings"].fillna("N/A")
-    tbl["EarningsBeats"]  = tbl["EarningsBeats"].fillna("N/A")
     tbl = tbl.rename(columns={
         "AnalystUpside":"Upside","TargetMean":"Mean Target",
         "NumAnalysts":"# Analysts","Recommendation":"Consensus",
         "RevenueGrowth":"Rev Growth","MarketCap":"Mkt Cap",
         "ATR_pct":"ATR%","RelVol":"Rel Vol","InsiderSignal":"Insider",
-        "EarningsBeats":"EPS Beats","NextEarnings":"Next Earnings",
+        "NextEarnings":"Next Earnings",
         "BullPct":"ST Bulls","MsgCount":"ST Msgs","ShortPct":"Short%",
     })
 
@@ -2685,7 +2688,7 @@ with tab_sig:
                 upside=fd.get("AnalystUpside"), recommendation=fd.get("Recommendation",""),
                 mcap=fmt_mcap(fd.get("MarketCap")), rev_growth=fd.get("RevenueGrowth"),
                 insider_signal=ex.get("InsiderSignal") if hasattr(ex, "get") else None,
-                earnings_beats=ex.get("EarningsBeats") if hasattr(ex, "get") else None,
+                earnings_beats=None,
                 next_earnings=fd.get("NextEarnings"),
                 st_bull_pct=sent.get("bull_pct"), st_msgs=sent.get("msg_count", 0),
                 headlines=ex.get("Headlines") if hasattr(ex, "get") else [],

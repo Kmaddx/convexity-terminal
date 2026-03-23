@@ -294,32 +294,21 @@ def calc_four_pillars(row, themes, spy_ret=None, etf_data=None, st_data=None, ai
     else:
         narr += 5  # no data = neutral, not penalized
 
-    # AI headline sentiment: up to 10 pts (from Claude analysis of recent news)
+    # AI headline sentiment: up to 15 pts (from Claude analysis of recent news)
     _ai_score = _safe(row.get("AI_HeadlineScore"))
     if _ai_score is not None and _ai_score != 0:
-        # Score range: -1 to +1 → mapped to 0-10 pts (5 = neutral)
-        narr += round(5 + _ai_score * 5, 1)
+        # Score range: -1 to +1 → mapped to 0-15 pts (7.5 = neutral)
+        narr += round(7.5 + _ai_score * 7.5, 1)
     else:
-        narr += 5  # no AI data or neutral = baseline
+        narr += 7.5  # no AI data or neutral = baseline
 
-    # Insider buying: 15 pts — strongest conviction signal (recent purchases)
+    # Insider buying: 20 pts — strongest conviction signal (recent purchases)
     insider_sig = str(row.get("InsiderSignal", "")).lower()
     insider_net = _safe(row.get("InsiderNet"), 0)
     if insider_sig == "buying" or insider_net > 0:
-        narr += 15
+        narr += 20
     else:
         narr += 5  # absence of insider buying isn't bearish
-
-    # Earnings beat track record: up to 10 pts
-    beats = row.get("EarningsBeats")
-    if beats is not None:
-        try:
-            beat_val = int(beats) if not isinstance(beats, str) else int(beats.split("/")[0])
-            narr += min(beat_val / 3, 1.0) * 10
-        except (ValueError, IndexError):
-            narr += 5
-    else:
-        narr += 5  # no data = neutral
 
     # Theme momentum: up to 15 pts — is the theme hot right now?
     if ticker_themes and etf_data is not None and not etf_data.empty:
