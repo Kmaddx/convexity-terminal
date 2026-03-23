@@ -618,7 +618,7 @@ def fetch_fundamentals(tickers):
 def _fetch_single_extra(t):
     """Fetch news, insider, earnings for a single ticker. Used by ThreadPoolExecutor."""
     row = {"Ticker": t, "InsiderSignal": "N/A", "InsiderNet": 0,
-           "EarningsBeats": None, "Headlines": [], "InsiderBuys": []}
+           "Headlines": [], "InsiderBuys": []}
     try:
         obj = yf.Ticker(t)
         try:
@@ -707,7 +707,7 @@ def fetch_extras(tickers):
                 results_map[t] = future.result()
             except Exception:
                 results_map[t] = {"Ticker": t, "InsiderSignal": "N/A", "InsiderNet": 0,
-                                  "EarningsBeats": None, "Headlines": [], "InsiderBuys": []}
+                                  "Headlines": [], "InsiderBuys": []}
     return pd.DataFrame([results_map.get(t, {"Ticker": t}) for t in tickers])
 
 
