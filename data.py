@@ -53,14 +53,21 @@ def _save_fund_cache(data_by_ticker):
 
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_price_data(tickers):
+    import time
     results = []
     ticker_list = list(tickers)
     # Batch download all tickers at once (much faster than sequential)
-    try:
-        raw = yf.download(ticker_list, period="1y", interval="1d",
-                          progress=False, auto_adjust=True, group_by="ticker", threads=True)
-    except Exception:
-        raw = pd.DataFrame()
+    # Retry up to 2 times with 2s backoff for transient failures
+    raw = pd.DataFrame()
+    for attempt in range(2):
+        try:
+            raw = yf.download(ticker_list, period="1y", interval="1d",
+                              progress=False, auto_adjust=True, group_by="ticker", threads=True)
+            if not raw.empty:
+                break
+        except Exception:
+            if attempt == 0:
+                time.sleep(2)  # Wait before retry
     for t in ticker_list:
         try:
             if len(ticker_list) == 1:

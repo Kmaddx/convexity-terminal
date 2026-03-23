@@ -235,7 +235,8 @@ def calc_four_pillars(row, themes, spy_ret=None, etf_data=None, st_data=None, ai
     # ETF benchmark momentum boost: up to 25 pts (best across all themes)
     if etf_data is not None and not etf_data.empty and spy_ret and ticker_themes:
         theme_etfs_map = get_theme_etfs(themes) if isinstance(themes, dict) and "themes" in themes else {}
-        spy_3m = spy_ret.get("3m", 0)
+        _spy_3m_raw = spy_ret.get("3m", 0) if isinstance(spy_ret, dict) else 0
+        spy_3m = float(_spy_3m_raw) if not isinstance(_spy_3m_raw, pd.Series) else 0
         best_etf_boost = 0
         for th in ticker_themes:
             theme_etf_list = theme_etfs_map.get(th, [])
@@ -243,7 +244,7 @@ def calc_four_pillars(row, themes, spy_ret=None, etf_data=None, st_data=None, ai
             if not etf_sub.empty and etf_sub["Ret3m"].notna().any():
                 _ret3m_vals = pd.to_numeric(etf_sub["Ret3m"], errors="coerce").dropna()
                 etf_avg_3m = float(_ret3m_vals.mean()) if len(_ret3m_vals) > 0 else 0
-                etf_rs = etf_avg_3m - spy_3m
+                etf_rs = float(etf_avg_3m - spy_3m)
                 if etf_rs > 0:
                     candidate = min(etf_rs / 30, 1.0) * 25
                     if candidate > best_etf_boost:
@@ -253,7 +254,8 @@ def calc_four_pillars(row, themes, spy_ret=None, etf_data=None, st_data=None, ai
     # Ticker 3m return vs SPY: up to 15 pts
     if spy_ret:
         ret3m = float(_safe(row.get("Ret3m"), 0))
-        spy_3m = spy_ret.get("3m", 0)
+        _spy_3m_raw = spy_ret.get("3m", 0) if isinstance(spy_ret, dict) else 0
+        spy_3m = float(_spy_3m_raw) if not isinstance(_spy_3m_raw, pd.Series) else 0
         theme_rs = ret3m - spy_3m
         if theme_rs > 0:
             thematic += min(theme_rs / 30, 1.0) * 15
