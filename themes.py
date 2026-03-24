@@ -151,37 +151,24 @@ _META_DISK_CACHE = _load_meta_cache()
 # ── API key helpers ──────────────────────────────────────────────────────────
 
 def _get_fmp_key():
-    """Get FMP API key from .env file or Streamlit secrets."""
-    env_path = os.path.join(_DIR, ".env")
-    if os.path.exists(env_path):
-        try:
-            with open(env_path) as f:
-                for line in f:
-                    if line.startswith("FMP_API_KEY="):
-                        return line.strip().split("=", 1)[1]
-        except Exception:
-            pass
+    """Get FMP API key from env var or Streamlit secrets."""
+    # 1. Environment variable (works with .streamlit/secrets.toml locally
+    #    and with Streamlit Cloud secrets in production)
     try:
-        return st.secrets.get("FMP_API_KEY", "")
-    except Exception:
-        return ""
+        return st.secrets["FMP_API_KEY"]
+    except (KeyError, FileNotFoundError):
+        pass
+    # 2. Fallback to OS environment variable
+    return os.environ.get("FMP_API_KEY", "")
 
 
 def _get_anthropic_key():
-    """Get Anthropic API key from .env file or Streamlit secrets."""
-    env_path = os.path.join(_DIR, ".env")
-    if os.path.exists(env_path):
-        try:
-            with open(env_path) as f:
-                for line in f:
-                    if line.startswith("ANTHROPIC_API_KEY="):
-                        return line.strip().split("=", 1)[1]
-        except Exception:
-            pass
+    """Get Anthropic API key from env var or Streamlit secrets."""
     try:
-        return st.secrets.get("ANTHROPIC_API_KEY", "")
-    except Exception:
-        return ""
+        return st.secrets["ANTHROPIC_API_KEY"]
+    except (KeyError, FileNotFoundError):
+        pass
+    return os.environ.get("ANTHROPIC_API_KEY", "")
 
 
 # ── Metadata fetching ────────────────────────────────────────────────────────

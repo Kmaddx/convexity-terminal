@@ -18,6 +18,7 @@ env/
 # Sensitive / local state
 .env
 *.env
+.streamlit/secrets.toml
 
 # Personal watchlists & portfolios (use watchlists.example.json as template)
 watchlists.json
