@@ -217,7 +217,7 @@ def load_watchlists():
         try:
             with open(WATCHLISTS_FILE) as f:
                 return json.load(f)
-        except Exception:
+        except (json.JSONDecodeError, FileNotFoundError, IOError):
             pass
     # Migrate from old flat tickers.json if it exists
     if os.path.exists(TICKERS_FILE):
@@ -226,7 +226,7 @@ def load_watchlists():
                 old = json.load(f)
             if isinstance(old, list):
                 return {"All Tickers": old}
-        except Exception:
+        except (json.JSONDecodeError, FileNotFoundError, IOError):
             pass
     return {"All Tickers": DEFAULT_TICKERS.copy()}
 
@@ -234,7 +234,7 @@ def save_watchlists(wl):
     try:
         with open(WATCHLISTS_FILE, "w") as f:
             json.dump(wl, f, indent=2)
-    except Exception:
+    except (IOError, TypeError, OSError):
         pass
 
 def parse_yahoo_csv(uploaded_file):
@@ -249,7 +249,7 @@ def parse_yahoo_csv(uploaded_file):
         # Fallback: first column
         return [s.strip().upper() for s in df.iloc[:, 0].dropna().astype(str).tolist()
                 if s.strip() and s.strip() != "nan"]
-    except Exception:
+    except (pd.errors.ParserError, ValueError, KeyError, AttributeError):
         return []
 
 if "watchlists" not in st.session_state:
@@ -324,7 +324,7 @@ def log_scores(df):
             history[t] = history[t][-90:]
         with open(SCORES_FILE, "w") as f:
             json.dump(history, f, indent=1)
-    except Exception:
+    except (IOError, TypeError, OSError):
         pass
 
 def load_score_history():
@@ -333,7 +333,7 @@ def load_score_history():
         try:
             with open(SCORES_FILE) as f:
                 return json.load(f)
-        except Exception:
+        except (json.JSONDecodeError, FileNotFoundError, IOError):
             pass
     return {}
 
@@ -754,7 +754,7 @@ if deep_dive_ticker != "--" and deep_dive_ticker in df_all["Ticker"].values:
             fig_dd.update_yaxes(title_text="Price ($)", row=1, col=1, gridcolor="#21262d")
             fig_dd.update_yaxes(title_text="Vol", row=2, col=1, gridcolor="#21262d")
             st.plotly_chart(fig_dd, use_container_width=True)
-    except Exception:
+    except (AttributeError, ValueError, KeyError, TypeError):
         pass
 
     # Score history trend
@@ -2104,7 +2104,7 @@ with tab_charts:
                 fig_ch.update_yaxes(title_text="$", row=1, col=1, gridcolor="#21262d")
                 fig_ch.update_yaxes(row=2, col=1, gridcolor="#21262d")
                 st.plotly_chart(fig_ch, use_container_width=True)
-        except Exception:
+        except (AttributeError, ValueError, KeyError, TypeError):
             st.caption(f"{chart_ticker}: chart unavailable")
 
 # ── TAB: Strength ────────────────────────────────────────────────────────────
@@ -2374,7 +2374,7 @@ with tab_sig:
                     if v >= 500_000: return "background-color: #1a3a2a; color: #2ecc71; font-weight: bold"
                     if v >= 100_000: return "background-color: #1a3a2a; color: #2ecc71"
                     return ""
-                except Exception:
+                except (TypeError, ValueError, AttributeError):
                     return ""
             insider_styled = df_insider_tbl.style.map(_color_insider_val, subset=["Value"])
             st.dataframe(insider_styled, width="stretch", hide_index=True)

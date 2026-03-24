@@ -432,7 +432,7 @@ def calc_four_pillars(row, themes, spy_ret=None, etf_data=None, st_data=None, ai
                 narr += 5
             elif 0 <= days_to <= 30:
                 narr += 3
-        except Exception:
+        except (ValueError, TypeError):
             pass
 
     # ── Cap and return ──

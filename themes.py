@@ -132,7 +132,7 @@ def _load_meta_cache():
         if os.path.exists(META_CACHE_FILE):
             with open(META_CACHE_FILE) as f:
                 return json.load(f)
-    except Exception:
+    except (json.JSONDecodeError, FileNotFoundError, IOError):
         pass
     return {}
 
@@ -141,7 +141,7 @@ def _save_meta_cache(cache):
     try:
         with open(META_CACHE_FILE, "w") as f:
             json.dump(cache, f)
-    except Exception:
+    except (IOError, TypeError, OSError):
         pass
 
 
@@ -198,7 +198,7 @@ def _fetch_ticker_metadata(ticker):
                     _META_DISK_CACHE[ticker] = result
                     _save_meta_cache(_META_DISK_CACHE)
                     return result
-        except Exception:
+        except (requests.RequestException, requests.exceptions.Timeout, ValueError, KeyError):
             pass
 
     # Fallback: yfinance
@@ -214,7 +214,7 @@ def _fetch_ticker_metadata(ticker):
             _META_DISK_CACHE[ticker] = result
             _save_meta_cache(_META_DISK_CACHE)
             return result
-    except Exception:
+    except (requests.RequestException, requests.exceptions.Timeout, AttributeError, KeyError):
         pass
 
     # Final fallback: disk cache
@@ -299,7 +299,7 @@ def load_themes():
             if raw != migrated:
                 save_themes(migrated)
             return migrated
-        except Exception:
+        except (json.JSONDecodeError, FileNotFoundError, IOError):
             pass
     return json.loads(json.dumps(DEFAULT_THEMES))
 
@@ -308,7 +308,7 @@ def save_themes(themes_data):
     try:
         with open(THEMES_FILE, "w") as f:
             json.dump(themes_data, f, indent=2)
-    except Exception:
+    except (IOError, TypeError, OSError):
         pass
 
 

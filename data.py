@@ -37,7 +37,7 @@ def _clear_yf_cookies():
                 os.remove(f)
             except OSError:
                 pass
-    except Exception:
+    except (ModuleNotFoundError, ImportError, OSError):
         pass
 
 
@@ -61,7 +61,7 @@ def _load_fund_cache():
             with open(FUND_CACHE_FILE) as f:
                 cache = json.load(f)
             return cache.get("data", {})
-    except Exception:
+    except (json.JSONDecodeError, FileNotFoundError, IOError):
         pass
     return {}
 
@@ -72,7 +72,7 @@ def _save_fund_cache(data_by_ticker):
         cache = {"_ts": datetime.now().timestamp(), "data": data_by_ticker}
         with open(FUND_CACHE_FILE, "w") as f:
             json.dump(cache, f)
-    except Exception:
+    except (IOError, TypeError, OSError):
         pass
 
 
@@ -97,7 +97,7 @@ def fetch_price_data(tickers):
                               progress=False, auto_adjust=True, group_by="ticker", threads=True)
             if not raw.empty:
                 break
-        except Exception as e:
+        except (requests.RequestException, requests.exceptions.Timeout, Exception) as e:
             _price_fetch_error = str(e)
             if attempt == 0:
                 time.sleep(2)  # Wait before retry
@@ -111,7 +111,7 @@ def fetch_price_data(tickers):
             if df.empty or len(df) < 50:
                 try:
                     df = yf.Ticker(t).history(period="1y", auto_adjust=True)
-                except Exception:
+                except (requests.RequestException, requests.exceptions.Timeout, KeyError, ValueError):
                     pass
             if df.empty or len(df) < 50:
                 continue
@@ -145,7 +145,7 @@ def fetch_price_data(tickers):
                 Ret1m=ret_1m, Ret3m=ret_3m, Ret6m=ret_6m,
                 Spark30=spark_30,
             ))
-        except Exception:
+        except (KeyError, IndexError, TypeError, ValueError):
             continue
     return pd.DataFrame(results)
 
@@ -160,7 +160,7 @@ def fetch_spy_daily():
         close = df["Close"].squeeze()
         daily_ret = close.pct_change().dropna()
         return close, daily_ret
-    except Exception:
+    except (requests.RequestException, requests.exceptions.Timeout, KeyError):
         return pd.Series(dtype=float), pd.Series(dtype=float)
 
 
@@ -181,7 +181,7 @@ def fetch_spy_returns():
         if len(close) >= 126:
             ret["6m"] = round(((price / close.iloc[-126]) - 1) * 100, 1)
         return ret
-    except Exception:
+    except (requests.RequestException, requests.exceptions.Timeout, KeyError):
         return {}
 
 
@@ -201,7 +201,7 @@ def fetch_market_environment():
             try:
                 d = idx_raw[sym].dropna(how="all")
                 return d if not d.empty else pd.DataFrame()
-            except Exception:
+            except (KeyError, AttributeError, IndexError):
                 return pd.DataFrame()
 
         # VIX
@@ -251,9 +251,9 @@ def fetch_market_environment():
                         "ret_1d": ret_1d, "ret_5d": ret_5d,
                         "above_50d": above_50, "price": round(float(s_close.iloc[-1]), 2),
                     }
-                except Exception:
+                except (KeyError, IndexError, TypeError, ValueError):
                     pass
-        except Exception:
+        except (requests.RequestException, requests.exceptions.Timeout, KeyError, IndexError, ValueError):
             pass
         env["sectors"] = sector_data
         env["sectors_above_50d"] = sum(1 for s in sector_data.values() if s["above_50d"])
@@ -329,7 +329,7 @@ def fetch_market_environment():
             env["dxy_vs_20d"] = round(float((dxy.iloc[-1] / dxy.rolling(20).mean().iloc[-1] - 1) * 100), 2)
             env["dxy_strengthening"] = bool(dxy.iloc[-1] > dxy.iloc[-5])
 
-    except Exception:
+    except (requests.RequestException, requests.exceptions.Timeout, KeyError, IndexError, ValueError):
         pass
     return env
 
@@ -356,7 +356,7 @@ def calc_downday_rs(tickers, spy_close, spy_daily_ret):
     try:
         raw = yf.download(ticker_list, period="1y", interval="1d",
                           progress=False, auto_adjust=True, group_by="ticker", threads=True)
-    except Exception:
+    except (requests.RequestException, requests.exceptions.Timeout):
         raw = pd.DataFrame()
 
     results = []
@@ -419,7 +419,7 @@ def calc_downday_rs(tickers, spy_close, spy_daily_ret):
                 "EarlyBottom": early_bottom,
                 "DaysSinceLow": days_since_low,
             })
-        except Exception:
+        except (KeyError, IndexError, TypeError, ValueError):
             continue
 
     if not results:
@@ -452,7 +452,7 @@ def fetch_etf_benchmark_data(etf_tickers):
     try:
         raw = yf.download(ticker_list, period="1y", interval="1d",
                           progress=False, auto_adjust=True, group_by="ticker", threads=True)
-    except Exception:
+    except (requests.RequestException, requests.exceptions.Timeout):
         raw = pd.DataFrame()
     for t in ticker_list:
         try:
@@ -463,7 +463,7 @@ def fetch_etf_benchmark_data(etf_tickers):
             if df.empty or len(df) < 22:
                 try:
                     df = yf.Ticker(t).history(period="1y", auto_adjust=True)
-                except Exception:
+                except (requests.RequestException, requests.exceptions.Timeout, KeyError):
                     pass
             if df.empty or len(df) < 22:
                 continue
@@ -480,7 +480,7 @@ def fetch_etf_benchmark_data(etf_tickers):
                 Ret1m=ret_1m, Ret3m=ret_3m, Ret6m=ret_6m,
                 Ret1y=ret_1y, RetYTD=ret_ytd,
             ))
-        except Exception:
+        except (KeyError, IndexError, TypeError, ValueError):
             continue
     return pd.DataFrame(results)
 
@@ -519,12 +519,12 @@ def _fetch_single_fundamental(t, _disk_cache):
         if isinstance(earnings_ts, list) and earnings_ts:
             try:
                 next_earnings = datetime.fromtimestamp(earnings_ts[0]).strftime("%Y-%m-%d")
-            except Exception:
+            except (ValueError, TypeError):
                 pass
         elif isinstance(earnings_ts, (int, float)) and earnings_ts:
             try:
                 next_earnings = datetime.fromtimestamp(earnings_ts).strftime("%Y-%m-%d")
-            except Exception:
+            except (ValueError, TypeError):
                 pass
 
         beta_val = info.get("beta")
@@ -618,9 +618,9 @@ def _fetch_single_fundamental(t, _disk_cache):
                             if rng > 0:
                                 row["PS_HistPos"] = round(
                                     (ps - row["PS_3yr_Min"]) / rng * 100, 1)
-            except Exception:
+            except (KeyError, TypeError, IndexError, ZeroDivisionError):
                 pass
-    except Exception:
+    except (requests.RequestException, requests.exceptions.Timeout, KeyError, ValueError, TypeError):
         if t in _disk_cache:
             row.update(_disk_cache[t])
     cache_entry = None
@@ -651,7 +651,7 @@ def fetch_fundamentals(tickers):
                     _new_cache[t] = cache_entry
                 if rl:
                     _rate_limited = True
-            except Exception:
+            except (requests.RequestException, requests.exceptions.Timeout, ValueError, KeyError):
                 results_map[t] = {"Ticker": t}
 
     # Preserve original ticker order
@@ -685,11 +685,11 @@ def _fetch_single_extra(t):
                 if title:
                     try:
                         date_str = datetime.fromtimestamp(int(ts)).strftime("%b %d") if isinstance(ts, (int, float)) else str(ts)[:10]
-                    except Exception:
+                    except (ValueError, TypeError):
                         date_str = ""
                     headlines.append({"date": date_str, "title": title, "pub": pub})
             row["Headlines"] = headlines
-        except Exception:
+        except (requests.RequestException, requests.exceptions.Timeout, KeyError, ValueError):
             pass
         try:
             ins = obj.insider_transactions
@@ -767,7 +767,7 @@ def _fetch_single_extra(t):
                         date_val = br.get("Start Date", "")
                         try:
                             date_str = pd.to_datetime(date_val).strftime("%b %d") if pd.notna(date_val) else ""
-                        except Exception:
+                        except (ValueError, TypeError):
                             date_str = str(date_val)[:10]
                         shares_val = br.get("Shares", 0)
                         buy_details.append({
@@ -811,10 +811,10 @@ def _fetch_single_extra(t):
                     row["InsiderBuyScore"]  = 0.0
                     row["InsiderSellScore"] = 0.0
                     row["InsiderCluster"]   = False
-        except Exception:
+        except (KeyError, AttributeError, TypeError, ValueError):
             pass
         # EarningsBeats removed — minor signal, heavy API call per ticker
-    except Exception:
+    except (requests.RequestException, requests.exceptions.Timeout, KeyError, AttributeError, ValueError):
         pass
     return row
 
@@ -829,7 +829,7 @@ def fetch_extras(tickers):
             t = futures[future]
             try:
                 results_map[t] = future.result(timeout=15)
-            except Exception:
+            except (TimeoutError, requests.RequestException, requests.exceptions.Timeout, KeyError):
                 results_map[t] = {"Ticker": t, "InsiderSignal": "N/A", "InsiderNet": 0,
                                   "InsiderBuyScore": 0.0, "InsiderSellScore": 0.0,
                                   "InsiderCluster": False, "Headlines": [], "InsiderBuys": []}
@@ -860,7 +860,7 @@ def fetch_stocktwits(tickers):
                 "bull_pct": round(bulls / total * 100) if total else None,
                 "msg_count": len(msgs),
             }
-        except Exception:
+        except (requests.RequestException, requests.exceptions.Timeout, ValueError, KeyError):
             return t, None
 
     out = {}
@@ -889,7 +889,7 @@ def scan_yahoo_screener(min_mcap=200_000_000, max_mcap=10_000_000_000, min_rev_g
         if result and "quotes" in result:
             return [q["symbol"] for q in result["quotes"] if "." not in q.get("symbol", ".")]
         return []
-    except Exception:
+    except (requests.RequestException, requests.exceptions.Timeout, ValueError, KeyError):
         return []
 
 
@@ -900,7 +900,7 @@ def scan_yahoo_predefined(screener_key="most_actives"):
         if result and "quotes" in result:
             return [q["symbol"] for q in result["quotes"] if "." not in q.get("symbol", ".")]
         return []
-    except Exception:
+    except (requests.RequestException, requests.exceptions.Timeout, ValueError, KeyError):
         return []
 
 
@@ -923,7 +923,7 @@ def scan_finviz():
                 seen.add(m)
                 tickers.append(m)
         return tickers[:100]
-    except Exception:
+    except (requests.RequestException, requests.exceptions.Timeout, ValueError, KeyError):
         return []
 
 
@@ -938,7 +938,7 @@ def scan_yahoo_trending():
         data = resp.json()
         quotes = data.get("finance", {}).get("result", [{}])[0].get("quotes", [])
         return [q["symbol"] for q in quotes if "." not in q.get("symbol", "")]
-    except Exception:
+    except (requests.RequestException, requests.exceptions.Timeout, ValueError, KeyError):
         return []
 
 
@@ -1034,7 +1034,7 @@ def fetch_market_headlines():
                     "source": source.text.strip() if source else "",
                     "date": pub_date.text.strip() if pub_date else "",
                 })
-        except Exception:
+        except (AttributeError, TypeError, ValueError):
             continue
     return headlines[:15]
 
@@ -1086,7 +1086,7 @@ Be concise and actionable. No filler. Write for someone managing a small-cap gro
         if resp.status_code == 200:
             return resp.json()["content"][0]["text"]
         return None
-    except Exception:
+    except (requests.RequestException, requests.exceptions.Timeout, ValueError):
         return None
 
 
@@ -1166,10 +1166,10 @@ Respond with one JSON line per ticker, nothing else."""
                         "score": max(-1.0, min(1.0, float(obj.get("score", 0)))),
                         "summary": obj.get("summary", ""),
                     }
-            except Exception:
+            except (ValueError, KeyError, TypeError):
                 continue
         return results
-    except Exception:
+    except (requests.RequestException, requests.exceptions.Timeout, ValueError, KeyError):
         return {}
 
 
@@ -1238,5 +1238,5 @@ Be direct. No filler. Base everything on the data provided."""
         if resp.status_code == 200:
             return resp.json()["content"][0]["text"]
         return f"API error {resp.status_code}: {resp.text[:200]}"
-    except Exception as e:
+    except (requests.RequestException, requests.exceptions.Timeout, ValueError) as e:
         return f"Request failed: {e}"
