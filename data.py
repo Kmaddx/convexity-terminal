@@ -79,6 +79,12 @@ def fetch_price_data(tickers):
                 df = raw
             else:
                 df = raw[t].dropna(how="all") if t in raw.columns.get_level_values(0) else pd.DataFrame()
+            # Fallback: batch download silently drops some tickers — fetch individually
+            if df.empty or len(df) < 50:
+                try:
+                    df = yf.Ticker(t).history(period="1y", auto_adjust=True)
+                except Exception:
+                    pass
             if df.empty or len(df) < 50:
                 continue
             close = df["Close"].squeeze()
