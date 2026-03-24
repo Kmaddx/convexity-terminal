@@ -367,7 +367,7 @@ def calc_four_pillars(row, themes, spy_ret=None, etf_data=None, st_data=None, ai
     fund = min(round(fund, 1), 100)
     thematic = min(round(thematic, 1), 100)
     narr = min(round(narr, 1), 100)
-    aligned = tech >= 50 and fund >= 50 and thematic >= 50 and narr >= 50
+    aligned = round(tech) >= 50 and round(fund) >= 50 and round(thematic) >= 50 and round(narr) >= 50
 
     return {
         "technical": tech, "fundamental": fund,
