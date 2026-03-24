@@ -1561,6 +1561,7 @@ with tab_conv:
         fig_conv.add_vline(x=50, line_dash="dot", line_color="#555")
         fig_conv.update_layout(height=max(400,len(conv)*32),
                                xaxis=dict(range=[0,115], title="Score"),
+                               yaxis=dict(autorange="reversed"),
                                margin=dict(l=60,r=20,t=20,b=40), showlegend=False, **DARK)
         st.plotly_chart(fig_conv, use_container_width=True)
         conv_tbl = conv[["Ticker","Price","ConvexityScore","PillarTech","PillarFund","PillarTheme","PillarNarr","AnalystUpside","NextEarnings"]].copy()
@@ -1601,6 +1602,7 @@ with tab_conv:
         fig_mom.add_vline(x=50, line_dash="dot", line_color="#555")
         fig_mom.update_layout(height=max(400,len(mom)*32),
                                xaxis=dict(range=[0,115], title="Score"),
+                               yaxis=dict(autorange="reversed"),
                                margin=dict(l=60,r=20,t=20,b=40), showlegend=False, **DARK)
         st.plotly_chart(fig_mom, use_container_width=True)
         mom_tbl = mom[["Ticker","Price","RSI","Pos52","NextEarnings","MomentumScore"]].copy()
@@ -2156,6 +2158,7 @@ with tab_str:
         fig_rs.update_layout(
             barmode="stack", height=max(400, len(rs_view) * 32),
             xaxis=dict(title="RS Score (0-100)", range=[0, 105]),
+            yaxis=dict(autorange="reversed"),
             legend=dict(orientation="h", yanchor="bottom", y=1.02),
             margin=dict(l=60, r=20, t=50, b=40), **DARK,
         )

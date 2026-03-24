@@ -433,6 +433,11 @@ def fetch_etf_benchmark_data(etf_tickers):
             else:
                 df = raw[t].dropna(how="all") if t in raw.columns.get_level_values(0) else pd.DataFrame()
             if df.empty or len(df) < 22:
+                try:
+                    df = yf.Ticker(t).history(period="1y", auto_adjust=True)
+                except Exception:
+                    pass
+            if df.empty or len(df) < 22:
                 continue
             close = df["Close"].squeeze()
             price = close.iloc[-1]
