@@ -25,6 +25,33 @@ _DIR = os.path.dirname(os.path.abspath(__file__))
 FUND_CACHE_FILE = os.path.join(_DIR, "fund_cache.json")
 
 
+# ── yfinance session helpers ──────────────────────────────────────────────────
+
+def _clear_yf_cookies():
+    """Delete yfinance cookie/crumb cache so next request gets a fresh session."""
+    try:
+        import glob as _glob, appdirs as _ad
+        cache_dir = _ad.user_cache_dir("py-yfinance")
+        for f in _glob.glob(os.path.join(cache_dir, "cookies.db*")):
+            try:
+                os.remove(f)
+            except OSError:
+                pass
+    except Exception:
+        pass
+
+
+_yf_refreshed = False   # only auto-refresh once per process lifetime
+
+
+def _ensure_yf_session():
+    """Clear stale cookies on first call each process, so we start with a fresh crumb."""
+    global _yf_refreshed
+    if not _yf_refreshed:
+        _clear_yf_cookies()
+        _yf_refreshed = True
+
+
 # ── Fund cache helpers ───────────────────────────────────────────────────────
 
 def _load_fund_cache():
@@ -57,6 +84,7 @@ _price_fetch_error = ""  # Last error reason, readable by portfolio_app.py
 def fetch_price_data(tickers):
     global _price_fetch_error
     import time
+    _ensure_yf_session()
     _price_fetch_error = ""
     results = []
     ticker_list = list(tickers)
@@ -462,9 +490,11 @@ def fetch_etf_benchmark_data(etf_tickers):
 @st.cache_data(ttl=1800, show_spinner=False)
 def _fetch_single_fundamental(t, _disk_cache):
     """Fetch fundamental data for a single ticker. Used by ThreadPoolExecutor."""
+    import random
     row = {"Ticker": t}
     _rate_limited = False
     try:
+        time.sleep(random.uniform(0.1, 0.5))   # stagger parallel requests
         obj = yf.Ticker(t)
         info = obj.info
         _has_real_data = info and any(info.get(k) is not None for k in
@@ -610,7 +640,7 @@ def fetch_fundamentals(tickers):
     _new_cache = {}
     _rate_limited = False
 
-    with ThreadPoolExecutor(max_workers=6) as pool:
+    with ThreadPoolExecutor(max_workers=4) as pool:
         futures = {pool.submit(_fetch_single_fundamental, t, _disk_cache): t for t in tickers}
         results_map = {}
         for future in as_completed(futures, timeout=30):
@@ -794,7 +824,7 @@ def _fetch_single_extra(t):
 def fetch_extras(tickers):
     from concurrent.futures import ThreadPoolExecutor, as_completed
     results_map = {}
-    with ThreadPoolExecutor(max_workers=6) as pool:
+    with ThreadPoolExecutor(max_workers=4) as pool:
         futures = {pool.submit(_fetch_single_extra, t): t for t in tickers}
         for future in as_completed(futures, timeout=30):
             t = futures[future]
