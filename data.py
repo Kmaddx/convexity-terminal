@@ -991,7 +991,7 @@ def fetch_market_headlines():
             )
             if r.status_code != 200:
                 continue
-            soup = BeautifulSoup(r.content, "html.parser")
+            soup = BeautifulSoup(r.content, "xml")
             for item in soup.find_all("item")[:5]:
                 title = item.find("title")
                 pub_date = item.find("pubDate")
