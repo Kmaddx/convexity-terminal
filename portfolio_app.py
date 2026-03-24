@@ -413,12 +413,8 @@ with st.status("◣ Loading Convexity Terminal...", expanded=True) as _status:
     # AI headline sentiment (uses headlines already fetched in df_extras)
     _ai_sentiment = {}
     if _anthropic_key and not df_extras.empty:
-        _headlines_map = {}
-        for _, _erow in df_extras.iterrows():
-            _t = _erow.get("Ticker")
-            _h = _erow.get("Headlines")
-            if _t and _h:
-                _headlines_map[_t] = _h
+        df_headlines = df_extras[df_extras["Ticker"].notna() & df_extras["Headlines"].notna()]
+        _headlines_map = dict(zip(df_headlines["Ticker"], df_headlines["Headlines"]))
         if _headlines_map:
             _ai_sentiment = score_headlines_ai(
                 tuple(sorted(_headlines_map.items())), _anthropic_key
@@ -1089,7 +1085,7 @@ with tab_dash:
         _today_dt = pd.Timestamp.now().normalize()
         _earn_soon = _earn_check[(_earn_check["_ed"] >= _today_dt) & (_earn_check["_ed"] <= _today_dt + pd.Timedelta(days=7))]
         if not _earn_soon.empty:
-            _earn_tickers = [f"{r['Ticker']} ({r['NextEarnings']})" for _, r in _earn_soon.iterrows()]
+            _earn_tickers = [f"{t} ({e})" for t, e in zip(_earn_soon["Ticker"], _earn_soon["NextEarnings"])]
             alert_card(f"<strong>Earnings This Week</strong>: {', '.join(_earn_tickers)}", "amber")
             _has_alerts = True
 
@@ -1251,13 +1247,15 @@ with tab_conv:
     if aligned_count > 0:
         st.success(f"**{aligned_count} fully aligned ticker{'s' if aligned_count != 1 else ''}** — all 4 pillars >= 50: "
                    f"**{', '.join(aligned_tickers['Ticker'].tolist())}**")
-        for _, arow in aligned_tickers.sort_values("PillarTech", ascending=False).iterrows():
-            stage = arow.get("SetupStage", "Neutral")
-            st.markdown(
-                f"**{arow['Ticker']}**  |  Stage: `{stage}`  |  "
+        sorted_aligned = aligned_tickers.sort_values("PillarTech", ascending=False)
+        sorted_aligned.apply(
+            lambda arow: st.markdown(
+                f"**{arow['Ticker']}**  |  Stage: `{arow.get('SetupStage', 'Neutral')}`  |  "
                 f"Tech **{arow['PillarTech']:.0f}**  |  Fund **{arow['PillarFund']:.0f}**  |  "
                 f"Theme **{arow['PillarTheme']:.0f}**  |  Narr **{arow['PillarNarr']:.0f}**"
-            )
+            ),
+            axis=1
+        )
     else:
         st.info("No tickers currently have all four pillars aligned (>= 50).")
 
@@ -1620,8 +1618,8 @@ with tab_conv:
     grad_divider()
     st.markdown("#### Re-rating Candidates")
     st.caption("Tickers ranked 3+ places higher on Convexity than Momentum — potential catalyst plays not yet priced in.")
-    conv_rank = {row["Ticker"]: i+1 for i, row in conv.iterrows()}
-    mom_rank  = {row["Ticker"]: i+1 for i, row in mom.iterrows()}
+    conv_rank = {t: i+1 for i, t in enumerate(conv["Ticker"])}
+    mom_rank  = {t: i+1 for i, t in enumerate(mom["Ticker"])}
     divs = [{"Ticker": t,
              "Momentum Rank": mom_rank.get(t,"-"),
              "Convexity Rank": conv_rank.get(t,"-"),
@@ -1964,10 +1962,8 @@ with tab_themes:
         etf_3m = round(etf_sub["Ret3m"].dropna().mean(), 1) if not etf_sub.empty and etf_sub["Ret3m"].notna().any() else None
 
         sub = df_theme[df_theme["Ticker"].isin(members)].sort_values("ConvexityScore", ascending=False)
-        for _, r in sub.iterrows():
-            _r1m = r.get("Ret1m")
-            _r3m = r.get("Ret3m")
-            _drill_rows.append({
+        theme_rows = sub.apply(
+            lambda r: {
                 "Theme": theme_name,
                 "Ticker": r["Ticker"],
                 "Price": r.get("Price"),
@@ -1975,12 +1971,15 @@ with tab_themes:
                 "52wk Pos": r.get("Pos52"),
                 "Convexity": r.get("ConvexityScore"),
                 "Momentum": r.get("MomentumScore"),
-                "1m Ret": _r1m,
-                "3m Ret": _r3m,
-                "vs ETF 1m": round(_r1m - etf_1m, 1) if pd.notna(_r1m) and etf_1m is not None else None,
+                "1m Ret": r.get("Ret1m"),
+                "3m Ret": r.get("Ret3m"),
+                "vs ETF 1m": round(r.get("Ret1m") - etf_1m, 1) if pd.notna(r.get("Ret1m")) and etf_1m is not None else None,
                 "ETF 1m": etf_1m,
                 "ETF 3m": etf_3m,
-            })
+            },
+            axis=1
+        ).tolist()
+        _drill_rows.extend(theme_rows)
 
     if _drill_rows:
         df_drill = pd.DataFrame(_drill_rows)
@@ -2167,12 +2166,14 @@ with tab_str:
         grad_divider()
         st.markdown("##### Down-Day Behaviour Detail")
         fig_dd = go.Figure()
-        for _, row in rs_view.iterrows():
-            color = label_colors.get(row.get("RS_Label", "Holding"), "#f1c40f")
-            fig_dd.add_trace(go.Scatter(
+        rs_view["color"] = rs_view["RS_Label"].apply(
+            lambda lbl: label_colors.get(lbl, "#f1c40f")
+        )
+        rs_view.apply(
+            lambda row: fig_dd.add_trace(go.Scatter(
                 x=[row["DownDayWinRate"]], y=[row["RecentDDExcess"]],
                 mode="markers+text", text=[row["Ticker"]], textposition="top center",
-                marker=dict(size=14, color=color, line=dict(width=1, color="#0d1117")),
+                marker=dict(size=14, color=row["color"], line=dict(width=1, color="#0d1117")),
                 hovertemplate=(
                     f"<b>{row['Ticker']}</b><br>"
                     f"Win Rate: {row['DownDayWinRate']:.0f}%<br>"
@@ -2180,7 +2181,9 @@ with tab_str:
                     f"RS Score: {row['RS_Score']:.0f}<extra></extra>"
                 ),
                 showlegend=False,
-            ))
+            )),
+            axis=1
+        )
         fig_dd.add_hline(y=0, line_dash="dot", line_color="#555", line_width=1)
         fig_dd.add_vline(x=50, line_dash="dot", line_color="#555", line_width=1)
         for (x, y, lbl) in [(75, 0.4, "STRONG LEADER"), (25, 0.4, "RECOVERING"),
@@ -2293,23 +2296,27 @@ with tab_sig:
         earn_upcoming = earn_data[earn_data["EarningsDate"] >= today_dt - pd.Timedelta(days=1)]
         if not earn_upcoming.empty:
             fig_earn = go.Figure()
-            for _, erow in earn_upcoming.iterrows():
-                days_away = (erow["EarningsDate"] - today_dt).days
-                color = "#e74c3c" if days_away <= 7 else "#f39c12" if days_away <= 21 else "#3498db"
-                fig_earn.add_trace(go.Scatter(
+            earn_upcoming["DaysAway"] = (earn_upcoming["EarningsDate"] - today_dt).dt.days
+            earn_upcoming["color"] = earn_upcoming["DaysAway"].apply(
+                lambda d: "#e74c3c" if d <= 7 else "#f39c12" if d <= 21 else "#3498db"
+            )
+            earn_upcoming.apply(
+                lambda erow: fig_earn.add_trace(go.Scatter(
                     x=[erow["EarningsDate"]], y=[erow["Ticker"]],
-                    mode="markers+text", text=[f"  {days_away}d"],
-                    textposition="middle right", textfont=dict(size=11, color=color),
-                    marker=dict(size=14, color=color, symbol="diamond"),
+                    mode="markers+text", text=[f"  {erow['DaysAway']:.0f}d"],
+                    textposition="middle right", textfont=dict(size=11, color=erow["color"]),
+                    marker=dict(size=14, color=erow["color"], symbol="diamond"),
                     hovertemplate=(
                         f"<b>{erow['Ticker']}</b><br>"
                         f"Earnings: {erow['NextEarnings']}<br>"
-                        f"Days away: {days_away}<br>"
+                        f"Days away: {erow['DaysAway']:.0f}<br>"
                         f"Convexity: {erow['ConvexityScore']:.0f}<br>"
                         f"RSI: {erow['RSI']:.0f}<extra></extra>"
                     ),
                     showlegend=False,
-                ))
+                )),
+                axis=1
+            )
             fig_earn.add_vline(x=today_dt.isoformat(), line_dash="dash", line_color="#2ecc71")
             fig_earn.add_annotation(x=today_dt.isoformat(), y=1, yref="paper",
                                     text="Today", showarrow=False,
@@ -2339,12 +2346,13 @@ with tab_sig:
     _insider_buy_tickers = df_sig[df_sig["InsiderSignal"] == "Buying"]
     if not _insider_buy_tickers.empty:
         insider_rows = []
-        for _, irow in _insider_buy_tickers.iterrows():
+        def expand_insider_buys(irow):
+            rows = []
             buys_list = irow.get("InsiderBuys", [])
             if isinstance(buys_list, list) and buys_list:
                 for b in buys_list:
                     val = b.get("value", 0)
-                    insider_rows.append({
+                    rows.append({
                         "Ticker": irow["Ticker"],
                         "Price": irow["Price"],
                         "Insider": b.get("insider", "Unknown"),
@@ -2354,7 +2362,7 @@ with tab_sig:
                         "Value": f"${val:,.0f}" if val else "N/A",
                     })
             else:
-                insider_rows.append({
+                rows.append({
                     "Ticker": irow["Ticker"],
                     "Price": irow["Price"],
                     "Insider": "—",
@@ -2363,6 +2371,11 @@ with tab_sig:
                     "Shares": "—",
                     "Value": "—",
                 })
+            return rows
+        
+        insider_expanded = _insider_buy_tickers.apply(expand_insider_buys, axis=1)
+        for rows_list in insider_expanded:
+            insider_rows.extend(rows_list)
         if insider_rows:
             df_insider_tbl = pd.DataFrame(insider_rows)
             def _color_insider_val(val):
@@ -2390,27 +2403,30 @@ with tab_sig:
     tgt_df = df_sig[df_sig["TargetMean"].notna() & (df_sig["TargetMean"] > 0)]
     if not tgt_df.empty:
         fig_tgt = go.Figure()
-        for _, row in tgt_df.iterrows():
-            t = row["Ticker"]
-            tl = row.get("TargetLow") or row["Price"] * 0.9
-            th = row.get("TargetHigh") or row["Price"] * 1.2
-            fig_tgt.add_trace(go.Scatter(
-                x=[t, t], y=[tl, th],
-                mode="lines", line=dict(color="#444", width=8),
-                showlegend=False, hoverinfo="skip",
-            ))
-            fig_tgt.add_trace(go.Scatter(
-                x=[t], y=[row["TargetMean"]],
-                mode="markers", marker=dict(symbol="diamond", color="#f39c12", size=14),
-                showlegend=False,
-                hovertemplate=f"<b>{t}</b><br>Mean: ${row['TargetMean']:.2f}<br>Upside: {row['AnalystUpside']:+.0f}%<extra></extra>",
-            ))
-            fig_tgt.add_trace(go.Scatter(
-                x=[t], y=[row["Price"]],
-                mode="markers", marker=dict(symbol="circle", color="white", size=10),
-                showlegend=False,
-                hovertemplate=f"<b>{t}</b> current: ${row['Price']:.2f}<extra></extra>",
-            ))
+        tgt_df["TargetLow"] = tgt_df.apply(lambda r: r.get("TargetLow") or r["Price"] * 0.9, axis=1)
+        tgt_df["TargetHigh"] = tgt_df.apply(lambda r: r.get("TargetHigh") or r["Price"] * 1.2, axis=1)
+        tgt_df.apply(
+            lambda row: (
+                fig_tgt.add_trace(go.Scatter(
+                    x=[row["Ticker"], row["Ticker"]], y=[row["TargetLow"], row["TargetHigh"]],
+                    mode="lines", line=dict(color="#444", width=8),
+                    showlegend=False, hoverinfo="skip",
+                )),
+                fig_tgt.add_trace(go.Scatter(
+                    x=[row["Ticker"]], y=[row["TargetMean"]],
+                    mode="markers", marker=dict(symbol="diamond", color="#f39c12", size=14),
+                    showlegend=False,
+                    hovertemplate=f"<b>{row['Ticker']}</b><br>Mean: ${row['TargetMean']:.2f}<br>Upside: {row['AnalystUpside']:+.0f}%<extra></extra>",
+                )),
+                fig_tgt.add_trace(go.Scatter(
+                    x=[row["Ticker"]], y=[row["Price"]],
+                    mode="markers", marker=dict(symbol="circle", color="white", size=10),
+                    showlegend=False,
+                    hovertemplate=f"<b>{row['Ticker']}</b> current: ${row['Price']:.2f}<extra></extra>",
+                ))
+            ),
+            axis=1
+        )
         fig_tgt.update_layout(height=380, yaxis_title="Price ($)",
                                margin=dict(l=40,r=20,t=20,b=40), showlegend=False, **DARK)
         st.plotly_chart(fig_tgt, use_container_width=True)
@@ -2426,10 +2442,8 @@ with tab_sig:
                  "sell":"Sell","strong_sell":"Strong Sell"}
         return icons.get(str(r).lower().replace(" ","_"), r or "N/A")
 
-    sig_rows = []
-    for _, row in df_sig.iterrows():
-        sent = st_data.get(row["Ticker"], {})
-        sig_rows.append({
+    sig_rows = df_sig.apply(
+        lambda row: {
             "Ticker": row["Ticker"], "Price": row["Price"],
             "Beta": row.get("Beta"), "ShortPct": row.get("ShortPct"),
             "AnalystUpside": row.get("AnalystUpside"),
@@ -2440,8 +2454,11 @@ with tab_sig:
             "RSI": row["RSI"], "ATR_pct": row["ATR_pct"], "RelVol": row.get("RelVol"),
             "InsiderSignal": row.get("InsiderSignal","N/A"),
             "NextEarnings": row.get("NextEarnings"),
-            "BullPct": sent.get("bull_pct"), "MsgCount": sent.get("msg_count", 0),
-        })
+            "BullPct": st_data.get(row["Ticker"], {}).get("bull_pct"),
+            "MsgCount": st_data.get(row["Ticker"], {}).get("msg_count", 0),
+        },
+        axis=1
+    ).tolist()
 
     tbl = pd.DataFrame(sig_rows)
     tbl["Recommendation"] = tbl["Recommendation"].apply(fmt_rec)
