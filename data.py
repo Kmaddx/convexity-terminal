@@ -487,7 +487,6 @@ def fetch_etf_benchmark_data(etf_tickers):
 
 # ── Fundamentals ─────────────────────────────────────────────────────────────
 
-@st.cache_data(ttl=1800, show_spinner=False)
 def _fetch_single_fundamental(t, _disk_cache):
     """Fetch fundamental data for a single ticker. Used by ThreadPoolExecutor."""
     import random
@@ -643,7 +642,7 @@ def fetch_fundamentals(tickers):
     with ThreadPoolExecutor(max_workers=4) as pool:
         futures = {pool.submit(_fetch_single_fundamental, t, _disk_cache): t for t in tickers}
         results_map = {}
-        for future in as_completed(futures, timeout=30):
+        for future in as_completed(futures):
             t = futures[future]
             try:
                 row, cache_entry, rl = future.result(timeout=15)
@@ -826,7 +825,7 @@ def fetch_extras(tickers):
     results_map = {}
     with ThreadPoolExecutor(max_workers=4) as pool:
         futures = {pool.submit(_fetch_single_extra, t): t for t in tickers}
-        for future in as_completed(futures, timeout=30):
+        for future in as_completed(futures):
             t = futures[future]
             try:
                 results_map[t] = future.result(timeout=15)
