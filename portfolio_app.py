@@ -1206,21 +1206,20 @@ with tab_dash:
     section_header("Portfolio Map — RSI vs 52-Week Position", "#f39c12")
     st.caption("Bubble size = ATR volatility. Bottom-left = weak. Top-right = strong. Bottom-right = pullback opportunity.")
     fig5 = go.Figure()
-    for _, row in df_price.iterrows():
-        vs200_str = f"{row['vsMA200']:+.1f}%" if row["vsMA200"] is not None else "N/A"
-        fig5.add_trace(go.Scatter(
-            x=[row["Pos52"]], y=[row["RSI"]],
-            mode="markers+text", text=[row["Ticker"]], textposition="top center",
-            marker=dict(size=row["ATR_pct"]*4, color=pos_color(row["Pos52"]),
-                        line=dict(width=1, color="#0d1117")),
-            hovertemplate=(
-                f"<b>{row['Ticker']}</b><br>Price: ${row['Price']}<br>"
-                f"RSI: {row['RSI']}<br>52wk Pos: {row['Pos52']:.1f}%<br>"
-                f"ATR%: {row['ATR_pct']}<br>vs MA50: {row['vsMA50']:+.1f}%<br>"
-                f"vs MA200: {vs200_str}<extra></extra>"
-            ),
-            showlegend=False,
-        ))
+    df_price["vsMA200_str"] = df_price["vsMA200"].apply(lambda x: f"{x:+.1f}%" if x is not None else "N/A")
+    df_price.apply(lambda row: fig5.add_trace(go.Scatter(
+        x=[row["Pos52"]], y=[row["RSI"]],
+        mode="markers+text", text=[row["Ticker"]], textposition="top center",
+        marker=dict(size=row["ATR_pct"]*4, color=pos_color(row["Pos52"]),
+                    line=dict(width=1, color="#0d1117")),
+        hovertemplate=(
+            f"<b>{row['Ticker']}</b><br>Price: ${row['Price']}<br>"
+            f"RSI: {row['RSI']}<br>52wk Pos: {row['Pos52']:.1f}%<br>"
+            f"ATR%: {row['ATR_pct']}<br>vs MA50: {row['vsMA50']:+.1f}%<br>"
+            f"vs MA200: {row['vsMA200_str']}<extra></extra>"
+        ),
+        showlegend=False,
+    )), axis=1)
     fig5.add_hline(y=70, line_dash="dash", line_color="#e74c3c", line_width=0.8,
                    annotation_text="Overbought", annotation_font_color="#e74c3c")
     fig5.add_hline(y=30, line_dash="dash", line_color="#2ecc71", line_width=0.8,
