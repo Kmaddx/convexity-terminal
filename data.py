@@ -641,6 +641,7 @@ def fetch_fundamentals(tickers):
 def _fetch_single_extra(t):
     """Fetch news, insider, earnings for a single ticker. Used by ThreadPoolExecutor."""
     row = {"Ticker": t, "InsiderSignal": "N/A", "InsiderNet": 0,
+           "InsiderBuyScore": 0.0, "InsiderSellScore": 0.0, "InsiderCluster": False,
            "Headlines": [], "InsiderBuys": []}
     try:
         obj = yf.Ticker(t)
@@ -674,42 +675,113 @@ def _fetch_single_extra(t):
                         recent = ins[ins[date_col] >= cutoff]
                     else:
                         recent = ins
+
                 tx_col = next((c for c in recent.columns if "text" in c.lower()), None)
                 if tx_col is None:
                     tx_col = next((c for c in recent.columns if "transaction" in c.lower()), None)
+
                 if tx_col is not None:
                     tx = recent[tx_col].astype(str).str.lower()
-                    buy_mask = tx.str.contains("buy|purchase|acquisition", na=False)
-                    sell_mask = tx.str.contains("sell|sale|disposition", na=False)
-                    buys = int(buy_mask.sum())
-                    sells = int(sell_mask.sum())
+
+                    # ── Filter noise transactions ──────────────────────────────
+                    # Exclude: derivative exercises, grants/awards, $0 price
+                    noise_mask = (
+                        tx.str.contains("exercise|conversion|derivative|convert|grant|award|gift", na=False) |
+                        (recent.get("Value", pd.Series(dtype=float)).fillna(0).astype(float) == 0)
+                    )
+                    # Exclude 10%+ beneficial owners (institutional, not management signal)
+                    pos_col = next((c for c in recent.columns if "position" in c.lower()), None)
+                    if pos_col:
+                        pos = recent[pos_col].astype(str).str.lower()
+                        noise_mask = noise_mask | pos.str.contains("beneficial owner|10%|10 percent", na=False)
+
+                    discretionary = recent[~noise_mask]
+                    tx_disc = tx[~noise_mask]
+
+                    buy_mask  = tx_disc.str.contains("buy|purchase|acquisition", na=False)
+                    sell_mask = tx_disc.str.contains("sell|sale|disposition", na=False)
+
+                    # ── Role weights ───────────────────────────────────────────
+                    def _role_weight(position):
+                        p = str(position).lower()
+                        if any(x in p for x in ["chief executive", "ceo", "president"]):
+                            return 3.0
+                        if any(x in p for x in ["chief financial", "cfo", "chief operating", "coo"]):
+                            return 2.5
+                        if any(x in p for x in ["director"]):
+                            return 1.5
+                        if any(x in p for x in ["officer", "vp", "vice president"]):
+                            return 1.5
+                        return 1.0
+
+                    # ── Dollar value weight ────────────────────────────────────
+                    def _value_weight(val):
+                        v = float(val) if pd.notna(val) else 0
+                        if v >= 500_000: return 3.0
+                        if v >= 100_000: return 2.0
+                        if v >= 10_000:  return 1.0
+                        return 0.5
+
                     buy_details = []
-                    if buys > 0:
-                        buy_rows = recent[buy_mask]
-                        for _, br in buy_rows.iterrows():
-                            detail = {}
-                            detail["insider"] = br.get("Insider", "Unknown")
-                            detail["position"] = br.get("Position", "")
-                            date_val = br.get("Start Date", "")
-                            if pd.notna(date_val):
-                                try:
-                                    detail["date"] = pd.to_datetime(date_val).strftime("%b %d")
-                                except Exception:
-                                    detail["date"] = str(date_val)[:10]
-                            else:
-                                detail["date"] = ""
-                            val = br.get("Value", 0)
-                            detail["value"] = float(val) if pd.notna(val) else 0
-                            shares_val = br.get("Shares", 0)
-                            detail["shares"] = int(shares_val) if pd.notna(shares_val) else 0
-                            buy_details.append(detail)
+                    buy_score = 0.0
+                    sell_score = 0.0
+                    distinct_buyers = set()
+
+                    buy_rows = discretionary[buy_mask]
+                    for _, br in buy_rows.iterrows():
+                        pos  = br.get("Position", "") or br.get(pos_col, "") if pos_col else br.get("Position", "")
+                        val  = br.get("Value", 0)
+                        w    = _role_weight(pos) * _value_weight(val)
+                        buy_score += w
+                        insider_name = br.get("Insider", "Unknown")
+                        distinct_buyers.add(str(insider_name))
+                        date_val = br.get("Start Date", "")
+                        try:
+                            date_str = pd.to_datetime(date_val).strftime("%b %d") if pd.notna(date_val) else ""
+                        except Exception:
+                            date_str = str(date_val)[:10]
+                        shares_val = br.get("Shares", 0)
+                        buy_details.append({
+                            "insider":   insider_name,
+                            "position":  str(pos),
+                            "date":      date_str,
+                            "value":     float(val) if pd.notna(val) else 0,
+                            "shares":    int(shares_val) if pd.notna(shares_val) else 0,
+                            "weight":    round(w, 1),
+                        })
+
+                    sell_rows = discretionary[sell_mask]
+                    for _, sr in sell_rows.iterrows():
+                        pos = sr.get("Position", "") or sr.get(pos_col, "") if pos_col else sr.get("Position", "")
+                        val = sr.get("Value", 0)
+                        sell_score += _role_weight(pos) * _value_weight(val)
+
                     row["InsiderBuys"] = buy_details
+                    row["InsiderBuyScore"]  = round(buy_score, 1)
+                    row["InsiderSellScore"] = round(sell_score, 1)
+                    row["InsiderCluster"]   = len(distinct_buyers) >= 3
+
+                    # ── Signal classification ──────────────────────────────────
+                    if buy_score == 0 and sell_score == 0:
+                        signal = "Neutral"
+                    elif buy_score >= sell_score * 1.5:
+                        if len(distinct_buyers) >= 3:
+                            signal = "Cluster Buy"
+                        elif buy_score >= 4.0:
+                            signal = "Strong Buy"
+                        else:
+                            signal = "Buying"
+                    elif sell_score > buy_score * 1.5:
+                        signal = "Selling"
+                    else:
+                        signal = "Neutral"
+
+                    row["InsiderNet"]    = round(buy_score - sell_score, 1)
+                    row["InsiderSignal"] = signal
                 else:
-                    buys, sells = 0, 0
-                net = int(buys) - int(sells)
-                row["InsiderNet"] = net
-                row["InsiderSignal"] = ("Buying" if net > 0
-                                        else "Selling" if net < 0 else "Neutral")
+                    row["InsiderBuyScore"]  = 0.0
+                    row["InsiderSellScore"] = 0.0
+                    row["InsiderCluster"]   = False
         except Exception:
             pass
         # EarningsBeats removed — minor signal, heavy API call per ticker
@@ -730,7 +802,8 @@ def fetch_extras(tickers):
                 results_map[t] = future.result(timeout=15)
             except Exception:
                 results_map[t] = {"Ticker": t, "InsiderSignal": "N/A", "InsiderNet": 0,
-                                  "Headlines": [], "InsiderBuys": []}
+                                  "InsiderBuyScore": 0.0, "InsiderSellScore": 0.0,
+                                  "InsiderCluster": False, "Headlines": [], "InsiderBuys": []}
     return pd.DataFrame([results_map.get(t, {"Ticker": t}) for t in tickers])
 
 

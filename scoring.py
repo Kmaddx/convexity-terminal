@@ -304,13 +304,21 @@ def calc_four_pillars(row, themes, spy_ret=None, etf_data=None, st_data=None, ai
     else:
         narr += 7.5  # no AI data or neutral = baseline
 
-    # Insider buying: 20 pts — strongest conviction signal (recent purchases)
-    insider_sig = str(row.get("InsiderSignal", "")).lower()
-    insider_net = _safe(row.get("InsiderNet"), 0)
-    if insider_sig == "buying" or insider_net > 0:
-        narr += 20
+    # Insider buying: up to 20 pts — weighted by role, value, and cluster
+    insider_sig   = str(row.get("InsiderSignal", "")).lower()
+    buy_score     = _safe(row.get("InsiderBuyScore"), 0)
+    sell_score    = _safe(row.get("InsiderSellScore"), 0)
+    cluster       = bool(row.get("InsiderCluster", False))
+    if insider_sig == "cluster buy" or cluster:
+        narr += 20          # 3+ distinct insiders buying — very strong signal
+    elif insider_sig == "strong buy" or buy_score >= 4.0:
+        narr += 17          # C-suite or large-value open market purchase
+    elif insider_sig == "buying" or buy_score > 0:
+        narr += 12          # Discretionary buying present
+    elif insider_sig == "selling" and sell_score > buy_score * 1.5:
+        narr += 2           # Net discretionary selling — mild negative
     else:
-        narr += 5  # absence of insider buying isn't bearish
+        narr += 5           # Neutral / no signal
 
     # Theme momentum: up to 15 pts — is the theme hot right now?
     if ticker_themes and etf_data is not None and not etf_data.empty:
