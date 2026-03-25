@@ -892,9 +892,55 @@ with tab_dash:
     _env_cards_html += '</div>'
     st.markdown(_env_cards_html, unsafe_allow_html=True)
 
+    # ── Portfolio Breadth ──
+    _pb_n = len(df_all)
+    _pb_above50  = int((df_all["vsMA50"] > 0).sum())
+    _pb_above200 = int((df_all["vsMA200"].fillna(-999) > 0).sum())
+    _pb_setup    = int(((df_all["RSI"] >= 40) & (df_all["RSI"] <= 60)).sum())
+    _pb_highs    = int((df_all["Pos52"] >= 70).sum())
+
+    def _pb_bar(label, count, total, threshold=0.6):
+        pct = count / total if total > 0 else 0
+        color = "#2ecc71" if pct >= threshold else "#f39c12" if pct >= 0.35 else "#e74c3c"
+        return (
+            f'<div style="flex:1;min-width:0;">'
+            f'<div style="font-size:0.65rem;color:#8b949e;text-transform:uppercase;letter-spacing:0.5px;">{label}</div>'
+            f'<div style="font-size:1.1rem;font-weight:700;color:{color};">{count}'
+            f'<span style="font-size:0.72rem;color:#8b949e;">/{total}</span></div>'
+            f'<div style="background:#21262d;border-radius:3px;height:4px;margin-top:4px;">'
+            f'<div style="background:{color};width:{pct*100:.0f}%;height:4px;border-radius:3px;"></div>'
+            f'</div></div>'
+        )
+
+    _pb_html = (
+        '<div style="background:#0d1117;border:1px solid #30363d;border-radius:8px;'
+        'padding:12px 16px;margin:8px 0 4px 0;">'
+        '<div style="font-size:0.65rem;color:#8b949e;text-transform:uppercase;'
+        'letter-spacing:1px;margin-bottom:10px;">Portfolio Breadth</div>'
+        '<div style="display:flex;gap:16px;">'
+    )
+    _pb_html += _pb_bar("Above MA50",      _pb_above50,  _pb_n)
+    _pb_html += _pb_bar("Above MA200",     _pb_above200, _pb_n)
+    _pb_html += _pb_bar("RSI Setup (40–60)", _pb_setup,  _pb_n, threshold=0.5)
+    _pb_html += _pb_bar("Near 52wk High",  _pb_highs,    _pb_n, threshold=0.5)
+    _pb_html += '</div></div>'
+    st.markdown(_pb_html, unsafe_allow_html=True)
+
     # ── Portfolio-level signals ──
     _portfolio_warnings = list(env_warnings)
     _portfolio_tailwinds = list(env_tailwinds)
+
+    # Breadth divergence: market trending but portfolio not participating
+    _spx_above_50d = (market_env.get("spx_vs_50d") or 0) > 0
+    _pb_above50_pct = _pb_above50 / _pb_n if _pb_n > 0 else 0
+    if _spx_above_50d and _pb_above50_pct < 0.4:
+        _portfolio_warnings.append(
+            f"Breadth divergence — SPX above 50d MA but only {_pb_above50}/{_pb_n} holdings are ({_pb_above50_pct:.0%})"
+        )
+    elif _spx_above_50d and _pb_above50_pct >= 0.7:
+        _portfolio_tailwinds.append(
+            f"Portfolio participating — {_pb_above50}/{_pb_n} holdings above MA50 with market trending up"
+        )
 
     # Leaders rolling over: top-5 convexity tickers with negative 1m return
     _top5 = df_all.nlargest(5, "ConvexityScore")
