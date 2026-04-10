@@ -449,6 +449,19 @@ else:
                 "RS_1m", "RS_3m"]:
         df_all[col] = None
 
+# ── EV/Sales sector percentile (compare each stock only vs its sector peers) ──
+# Stocks with no EV/Sales or no sector fall back to historical positioning in scoring
+if "EV_Sales" in df_all.columns and "Sector" in df_all.columns:
+    _evs = df_all[["Ticker", "EV_Sales", "Sector"]].copy()
+    _evs = _evs[_evs["EV_Sales"].notna() & (_evs["Sector"] != "") & (_evs["Sector"].notna())]
+    if not _evs.empty:
+        _evs["EVS_SectorPct"] = _evs.groupby("Sector")["EV_Sales"].rank(pct=True) * 100
+        df_all = df_all.merge(_evs[["Ticker", "EVS_SectorPct"]], on="Ticker", how="left")
+    else:
+        df_all["EVS_SectorPct"] = None
+else:
+    df_all["EVS_SectorPct"] = None
+
 # ── Four Pillars (the single scoring spine) ──
 df_all["SetupStage"] = df_all.apply(calc_setup_stage, axis=1)
 _pillar_results = df_all.apply(
@@ -1438,61 +1451,74 @@ with tab_conv:
 
     grad_divider()
 
-    # Compressed Spring chart (P/S historical position)
-    has_ps_hist = df_conv[df_conv["PS_HistPos"].notna()].sort_values("PS_HistPos")
-    if not has_ps_hist.empty:
-        st.markdown("#### Compressed Spring — P/S Position in 3-Year Range")
+    # Compressed Spring chart — EV/Sales position in 3-year range (primary)
+    # Falls back to P/S if EV/Sales history not available
+    _evs_col = "EVS_HistPos" if "EVS_HistPos" in df_conv.columns and df_conv["EVS_HistPos"].notna().any() else "PS_HistPos"
+    _val_col = "EV_Sales" if _evs_col == "EVS_HistPos" else "PS_Current"
+    _min_col = "EVS_3yr_Min" if _evs_col == "EVS_HistPos" else "PS_3yr_Min"
+    _max_col = "EVS_3yr_Max" if _evs_col == "EVS_HistPos" else "PS_3yr_Max"
+    _avg_col = "EVS_3yr_Avg" if _evs_col == "EVS_HistPos" else "PS_3yr_Avg"
+    _metric_label = "EV/Sales" if _evs_col == "EVS_HistPos" else "P/S"
+
+    has_hist = df_conv[df_conv[_evs_col].notna()].sort_values(_evs_col) if _evs_col in df_conv.columns else pd.DataFrame()
+    if not has_hist.empty:
+        st.markdown(f"#### Compressed Spring — {_metric_label} Position in 3-Year Range")
         st.caption(
-            "How expensive is the stock today vs its own history? "
-            "Left = historically cheap (compressed spring). Right = historically expensive."
+            f"How expensive is the stock today vs its own history ({_metric_label} accounts for debt)? "
+            "Left = historically cheap (compressed spring). Right = historically expensive. "
+            "Sector shown where available."
         )
         fig_ps = go.Figure()
-        for _, row in has_ps_hist.iterrows():
-            color = "#2ecc71" if row["PS_HistPos"] <= 25 else "#f39c12" if row["PS_HistPos"] <= 60 else "#e74c3c"
-            fig_ps.add_trace(go.Bar(
-                x=[row["PS_HistPos"]], y=[row["Ticker"]],
-                orientation="h", marker_color=color, showlegend=False,
-                text=f"  {row['PS_HistPos']:.0f}%  |  {row['PS_Current']:.1f}x P/S  (range: {row['PS_3yr_Min']:.1f}–{row['PS_3yr_Max']:.1f}x)",
+        has_hist.apply(
+            lambda row: fig_ps.add_trace(go.Bar(
+                x=[row[_evs_col]], y=[row["Ticker"]],
+                orientation="h",
+                marker_color="#2ecc71" if row[_evs_col] <= 25 else "#f39c12" if row[_evs_col] <= 60 else "#e74c3c",
+                showlegend=False,
+                text=f"  {row[_evs_col]:.0f}%  |  {row[_val_col]:.1f}x {_metric_label}"
+                     + (f"  [{row['Sector']}]" if pd.notna(row.get("Sector")) and row.get("Sector") else "")
+                     + (f"  (range: {row[_min_col]:.1f}–{row[_max_col]:.1f}x)" if pd.notna(row.get(_min_col)) else ""),
                 textposition="outside",
                 hovertemplate=(
                     f"<b>{row['Ticker']}</b><br>"
-                    f"Current P/S: {row['PS_Current']:.2f}x<br>"
-                    f"3yr Min: {row['PS_3yr_Min']:.2f}x<br>"
-                    f"3yr Max: {row['PS_3yr_Max']:.2f}x<br>"
-                    f"3yr Avg: {row['PS_3yr_Avg']:.2f}x<br>"
-                    f"Position in range: {row['PS_HistPos']:.0f}%<extra></extra>"
+                    + (f"Sector: {row['Sector']}<br>" if pd.notna(row.get("Sector")) and row.get("Sector") else "")
+                    + f"Current {_metric_label}: {row[_val_col]:.2f}x<br>"
+                    + (f"3yr Min: {row[_min_col]:.2f}x<br>3yr Max: {row[_max_col]:.2f}x<br>3yr Avg: {row[_avg_col]:.2f}x<br>" if pd.notna(row.get(_min_col)) else "")
+                    + f"Position in range: {row[_evs_col]:.0f}%<extra></extra>"
                 ),
-            ))
+            )),
+            axis=1
+        )
         fig_ps.add_vline(x=25, line_dash="dash", line_color="#2ecc71",
                          annotation_text="Compressed zone", annotation_font_color="#2ecc71")
         fig_ps.update_layout(
-            height=max(350, len(has_ps_hist) * 34),
-            xaxis=dict(range=[0, 130], title="Position in 3-year P/S range (%)"),
+            height=max(350, len(has_hist) * 34),
+            xaxis=dict(range=[0, 130], title=f"Position in 3-year {_metric_label} range (%)"),
             margin=dict(l=60, r=20, t=20, b=40), **DARK,
         )
         st.plotly_chart(fig_ps, use_container_width=True)
     else:
-        st.info("Historical P/S data loading — check back shortly or refresh.")
+        st.info(f"Historical {_metric_label} data loading — check back shortly or refresh.")
 
     # Priced for Perfection warning
     if perfection:
         grad_divider()
         st.markdown("#### Priced for Perfection — Negative Asymmetry")
         st.warning(
-            f"**{', '.join(perfection)}** — these stocks have P/S in the top 25% of their 3-year range "
+            f"**{', '.join(perfection)}** — these stocks have {_metric_label} in the top 25% of their 3-year range "
             "AND RSI >= 65. This is the opposite of a compressed spring: expensive + overbought = "
             "downside risk outweighs upside. Consider trimming or tightening stops."
         )
-        pfp_tbl = df_conv[df_conv["Ticker"].isin(perfection)][
-            ["Ticker", "Price", "RSI", "PS_Current", "PS_HistPos", "PS_3yr_Min", "PS_3yr_Max"]
-        ].copy()
-        pfp_tbl["PS_Current"] = pfp_tbl["PS_Current"].apply(lambda x: f"{x:.1f}x" if pd.notna(x) else "N/A")
-        pfp_tbl["PS_HistPos"] = pfp_tbl["PS_HistPos"].apply(lambda x: f"{x:.0f}%" if pd.notna(x) else "N/A")
-        pfp_tbl["PS_3yr_Min"] = pfp_tbl["PS_3yr_Min"].apply(lambda x: f"{x:.1f}x" if pd.notna(x) else "—")
-        pfp_tbl["PS_3yr_Max"] = pfp_tbl["PS_3yr_Max"].apply(lambda x: f"{x:.1f}x" if pd.notna(x) else "—")
+        _pfp_cols = ["Ticker", "Price", "RSI", _val_col, _evs_col, _min_col, _max_col]
+        pfp_tbl = df_conv[df_conv["Ticker"].isin(perfection)][[c for c in _pfp_cols if c in df_conv.columns]].copy()
+        for c in [_val_col, _min_col, _max_col]:
+            if c in pfp_tbl.columns:
+                pfp_tbl[c] = pfp_tbl[c].apply(lambda x: f"{x:.1f}x" if pd.notna(x) else "N/A")
+        if _evs_col in pfp_tbl.columns:
+            pfp_tbl[_evs_col] = pfp_tbl[_evs_col].apply(lambda x: f"{x:.0f}%" if pd.notna(x) else "N/A")
         pfp_tbl = pfp_tbl.rename(columns={
-            "PS_Current": "P/S", "PS_HistPos": "P/S Position",
-            "PS_3yr_Min": "3yr Low", "PS_3yr_Max": "3yr High",
+            _val_col: _metric_label, _evs_col: f"{_metric_label} Position",
+            _min_col: "3yr Low", _max_col: "3yr High",
         })
         st.dataframe(pfp_tbl, width="stretch", hide_index=True)
 
@@ -1500,15 +1526,18 @@ with tab_conv:
 
     # Valuation metrics table
     st.markdown("#### Valuation Metrics")
-    val_tbl = df_conv[[
-        "Ticker", "Price", "PS_Current", "PS_3yr_Min", "PS_3yr_Avg",
+    _sort_val_col = "EV_Sales" if "EV_Sales" in df_conv.columns else "PS_Current"
+    val_tbl = df_conv[[c for c in [
+        "Ticker", "Price", "EV_Sales", "EVS_HistPos", "EVS_SectorPct",
+        "PS_Current", "PS_3yr_Min", "PS_3yr_Avg",
         "EV_EBITDA", "GrossMargin", "RevGrowthPct", "Rule40",
-        "FCFPositive", "CashRunwayMonths", "InsiderPct", "InstitPct", "DaysToCover",
-    ]].copy().sort_values("PS_Current")
+        "FCFPositive", "CashRunwayMonths", "InsiderPct", "InstitPct", "DaysToCover", "Sector",
+    ] if c in df_conv.columns]].copy().sort_values(_sort_val_col, na_position="last")
 
     val_tbl["FCFPositive"] = val_tbl["FCFPositive"].apply(lambda x: "Yes" if x else "No")
 
     val_tbl = val_tbl.rename(columns={
+        "EV_Sales": "EV/Sales", "EVS_HistPos": "EV/S Hist%", "EVS_SectorPct": "EV/S Sector%",
         "PS_Current": "P/S", "PS_3yr_Min": "P/S 3yr Low", "PS_3yr_Avg": "P/S 3yr Avg",
         "EV_EBITDA": "EV/EBITDA", "GrossMargin": "Gross Margin",
         "RevGrowthPct": "Rev Growth", "FCFPositive": "FCF+",
@@ -1516,9 +1545,9 @@ with tab_conv:
         "InstitPct": "Instit%", "DaysToCover": "Days to Cover",
     })
 
-    # Gradient columns (numeric) — lower P/S is better, higher Rev Growth / Rule40 is better
+    # Gradient: lower EV/Sales is better; higher Rev Growth / Rule40 is better
     val_grad_cols_green = [c for c in ["Rev Growth", "Rule40"] if c in val_tbl.columns and val_tbl[c].notna().any()]
-    val_grad_cols_rev   = [c for c in ["P/S"] if c in val_tbl.columns and val_tbl[c].notna().any()]
+    val_grad_cols_rev   = [c for c in ["EV/Sales", "P/S"] if c in val_tbl.columns and val_tbl[c].notna().any()]
 
     val_styled = val_tbl.style
     if val_grad_cols_green:
@@ -1527,6 +1556,9 @@ with tab_conv:
         val_styled = val_styled.background_gradient(subset=val_grad_cols_rev, cmap="RdYlGn_r")
     val_styled = val_styled.format({
         "Price": "${:.2f}",
+        "EV/Sales": lambda x: f"{x:.1f}x" if pd.notna(x) and x else "N/A",
+        "EV/S Hist%": lambda x: f"{x:.0f}%" if pd.notna(x) else "—",
+        "EV/S Sector%": lambda x: f"{x:.0f}%" if pd.notna(x) else "—",
         "P/S": lambda x: f"{x:.1f}x" if pd.notna(x) and x else "N/A",
         "P/S 3yr Low": lambda x: f"{x:.1f}x" if pd.notna(x) and x else "—",
         "P/S 3yr Avg": lambda x: f"{x:.1f}x" if pd.notna(x) and x else "—",
@@ -1551,14 +1583,17 @@ with tab_conv:
         "Companies not yet FCF positive but growing fast with adequate runway — "
         "the 'pre-institutional green light' setup."
     )
+    _ebitda_val_col = "EV_Sales" if "EV_Sales" in df_conv.columns else "PS_Current"
+    _ebitda_val_label = "EV/Sales" if _ebitda_val_col == "EV_Sales" else "P/S"
     ebitda_flip = df_conv[
         (df_conv["FCFPositive"] == False) &
         df_conv["RevGrowthPct"].notna()
     ].sort_values("RevGrowthPct", ascending=False)[
-        ["Ticker", "Price", "RevGrowthPct", "Rule40", "CashRunwayMonths", "PS_Current"]
+        [c for c in ["Ticker", "Price", "RevGrowthPct", "Rule40", "CashRunwayMonths", _ebitda_val_col] if c in df_conv.columns]
     ].copy()
     ebitda_flip = ebitda_flip.rename(columns={
-        "RevGrowthPct": "Rev Growth", "CashRunwayMonths": "Cash Runway", "PS_Current": "P/S",
+        "RevGrowthPct": "Rev Growth", "CashRunwayMonths": "Cash Runway",
+        _ebitda_val_col: _ebitda_val_label,
     })
     if not ebitda_flip.empty:
         eb_grad_cols = [c for c in ["Rev Growth"] if ebitda_flip[c].notna().any()]

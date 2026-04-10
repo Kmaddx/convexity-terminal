@@ -266,15 +266,26 @@ def calc_four_pillars(row, themes, spy_ret=None, etf_data=None, st_data=None, ai
     elif rule40 > 0:
         fund += 3
 
-    # P/S valuation positioning: up to 8 pts — trading below historical avg
-    ps_pos = _safe(row.get("PS_HistPos"))
-    if ps_pos is not None and ps_pos > 0:
-        if ps_pos <= THRESHOLDS["ps_historical_25th"]:
-            fund += 8  # historically cheap
-        elif ps_pos <= THRESHOLDS["ps_historical_50th"]:
-            fund += 5  # below average
-        elif ps_pos <= THRESHOLDS["ps_historical_75th"]:
-            fund += 2  # above average
+    # EV/Sales valuation positioning: up to 8 pts
+    # Primary: EV/Sales vs own 3yr history (accounts for debt, better than P/S)
+    # Secondary: vs sector peers (passed in as evs_sector_pct — percentile within sector)
+    evs_pos = _safe(row.get("EVS_HistPos"))
+    evs_sector_pct = _safe(row.get("EVS_SectorPct"))  # computed in portfolio_app after data load
+    if evs_pos is not None and evs_pos >= 0:
+        if evs_pos <= THRESHOLDS["ps_historical_25th"]:
+            fund += 8  # historically cheap on EV/Sales
+        elif evs_pos <= THRESHOLDS["ps_historical_50th"]:
+            fund += 5
+        elif evs_pos <= THRESHOLDS["ps_historical_75th"]:
+            fund += 2
+    elif evs_sector_pct is not None:
+        # Fallback: use sector-relative percentile (lower = cheaper vs peers)
+        if evs_sector_pct <= THRESHOLDS["ps_historical_25th"]:
+            fund += 7  # cheapest quartile vs sector peers
+        elif evs_sector_pct <= THRESHOLDS["ps_historical_50th"]:
+            fund += 4
+        elif evs_sector_pct <= THRESHOLDS["ps_historical_75th"]:
+            fund += 1
     else:
         fund += 3  # no data, neutral
 

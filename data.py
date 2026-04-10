@@ -551,6 +551,13 @@ def _fetch_single_fundamental(t, _disk_cache):
         row["EV_EBITDA"] = round(ev, 1) if ev and ev > 0 else None
         row["GrossMargin"] = round(gm * 100, 1) if gm else None
 
+        # EV/Sales — preferred over P/S as it accounts for debt
+        ev_raw = info.get("enterpriseValue")
+        rev_raw = info.get("totalRevenue")
+        row["EV_Sales"] = round(ev_raw / rev_raw, 2) if ev_raw and rev_raw and rev_raw > 0 else None
+        row["Sector"] = info.get("sector", "")
+        row["Industry"] = info.get("industry", "")
+
         prof = info.get("profitMargins")
         row["RevGrowthPct"] = round(rev_growth * 100, 1) if rev_growth is not None else None
         row["Rule40"] = round(rev_growth * 100 + prof * 100, 1) if (rev_growth is not None and prof is not None) else None
@@ -584,9 +591,11 @@ def _fetch_single_fundamental(t, _disk_cache):
         else:
             row["OvernightChg"] = None
 
-        # Historical P/S range (3 years)
+        # Historical EV/Sales range (3 years) — sector-comparable valuation
         shares = info.get("sharesOutstanding")
-        if shares and ps:
+        total_debt = info.get("totalDebt") or 0
+        cash = info.get("totalCash") or 0
+        if shares and ev_raw and rev_raw:
             try:
                 hist = yf.download(t, period="3y", interval="1mo",
                                    progress=False, auto_adjust=True)
@@ -608,16 +617,33 @@ def _fetch_single_fundamental(t, _disk_cache):
                         monthly_close.index = monthly_close.index.tz_localize(None) if monthly_close.index.tz else monthly_close.index
                         ttm_monthly = (ttm.resample("MS").last()
                                           .reindex(monthly_close.index, method="ffill"))
-                        ps_hist = (monthly_close * shares / ttm_monthly).dropna()
-                        ps_hist = ps_hist[(ps_hist > 0) & (ps_hist < 500)]
-                        if len(ps_hist) >= 6:
-                            row["PS_3yr_Min"] = round(float(ps_hist.min()), 2)
-                            row["PS_3yr_Max"] = round(float(ps_hist.max()), 2)
-                            row["PS_3yr_Avg"] = round(float(ps_hist.mean()), 2)
-                            rng = row["PS_3yr_Max"] - row["PS_3yr_Min"]
+                        # EV/Sales: (market cap + net debt) / revenue
+                        net_debt = total_debt - cash
+                        market_cap_hist = monthly_close * shares
+                        ev_hist = market_cap_hist + net_debt
+                        ev_sales_hist = (ev_hist / ttm_monthly).dropna()
+                        ev_sales_hist = ev_sales_hist[(ev_sales_hist > 0) & (ev_sales_hist < 500)]
+                        if len(ev_sales_hist) >= 6:
+                            row["EVS_3yr_Min"] = round(float(ev_sales_hist.min()), 2)
+                            row["EVS_3yr_Max"] = round(float(ev_sales_hist.max()), 2)
+                            row["EVS_3yr_Avg"] = round(float(ev_sales_hist.mean()), 2)
+                            rng = row["EVS_3yr_Max"] - row["EVS_3yr_Min"]
+                            ev_sales_now = row["EV_Sales"] or (ev_raw / rev_raw)
                             if rng > 0:
-                                row["PS_HistPos"] = round(
-                                    (ps - row["PS_3yr_Min"]) / rng * 100, 1)
+                                row["EVS_HistPos"] = round(
+                                    (ev_sales_now - row["EVS_3yr_Min"]) / rng * 100, 1)
+                        # Keep P/S for backwards compatibility display
+                        if ps and shares:
+                            ps_hist = (monthly_close * shares / ttm_monthly).dropna()
+                            ps_hist = ps_hist[(ps_hist > 0) & (ps_hist < 500)]
+                            if len(ps_hist) >= 6:
+                                row["PS_3yr_Min"] = round(float(ps_hist.min()), 2)
+                                row["PS_3yr_Max"] = round(float(ps_hist.max()), 2)
+                                row["PS_3yr_Avg"] = round(float(ps_hist.mean()), 2)
+                                ps_rng = row["PS_3yr_Max"] - row["PS_3yr_Min"]
+                                if ps_rng > 0:
+                                    row["PS_HistPos"] = round(
+                                        (ps - row["PS_3yr_Min"]) / ps_rng * 100, 1)
             except (KeyError, TypeError, IndexError, ZeroDivisionError):
                 pass
     except (requests.RequestException, requests.exceptions.Timeout, KeyError, ValueError, TypeError):
