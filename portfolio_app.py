@@ -22,10 +22,11 @@ from data import (
     scan_yahoo_screener, scan_yahoo_predefined, scan_finviz, scan_yahoo_trending,
     claude_summarize, score_headlines_ai,
     fetch_market_headlines, ai_market_summary,
+    fetch_peer_comparison,
 )
 from themes import (
     load_themes, save_themes, get_ticker_themes, get_theme_tickers,
-    get_theme_etfs, get_all_etf_tickers, _get_anthropic_key,
+    get_theme_etfs, get_all_etf_tickers, _get_anthropic_key, _get_fmp_key,
     DEFAULT_THEMES,
 )
 
@@ -422,6 +423,27 @@ with st.status("◣ Loading Convexity Terminal...", expanded=True) as _status:
 
     _status.update(label="◣ Terminal Ready", state="complete", expanded=False)
 
+# ── Peer comparison (ETF holdings as sector proxy) ──
+# Build ticker -> primary ETF map from theme assignments, then fetch peer EV/Sales
+_fmp_key = _get_fmp_key()
+# Build ticker -> primary ETF from theme assignments
+_theme_etf_map = get_theme_etfs(st.session_state.themes)  # {theme: [etfs]}
+_ticker_to_etf = {}
+for _t in st.session_state.tickers:
+    _t_themes = get_ticker_themes(st.session_state.themes, _t)  # list of theme names
+    for _theme in _t_themes:
+        _etfs = _theme_etf_map.get(_theme, [])
+        if _etfs:
+            _ticker_to_etf[_t] = _etfs[0]  # primary ETF for first theme
+            break
+
+_peer_data = {}
+if _fmp_key and _ticker_to_etf:
+    try:
+        _peer_data = fetch_peer_comparison(tuple(sorted(_ticker_to_etf.items())), _fmp_key)
+    except Exception:
+        _peer_data = {}
+
 # ── Merge all data ──
 df_all = df_price.merge(df_fund, on="Ticker", how="left")
 df_all = df_all.merge(
@@ -461,6 +483,37 @@ if "EV_Sales" in df_all.columns and "Sector" in df_all.columns:
         df_all["EVS_SectorPct"] = None
 else:
     df_all["EVS_SectorPct"] = None
+
+# ── ETF peer comparison — add peer rank and metadata to df_all ──
+if _peer_data:
+    df_all["PeerRankPct"]   = df_all["Ticker"].map(lambda t: _peer_data.get(t, {}).get("peer_rank_pct"))
+    df_all["PeerETF"]       = df_all["Ticker"].map(lambda t: _peer_data.get(t, {}).get("etf"))
+    df_all["PeerCount"]     = df_all["Ticker"].map(lambda t: _peer_data.get(t, {}).get("peer_count"))
+    df_all["PeerMedianEVS"] = df_all["Ticker"].map(lambda t: _peer_data.get(t, {}).get("peer_median"))
+    # For tickers not in ETF holdings, rank their EV/Sales against the peer distribution
+    for _t in st.session_state.tickers:
+        if _t not in _peer_data and _t in _ticker_to_etf:
+            _etf = _ticker_to_etf[_t]
+            try:
+                from data import fetch_etf_peer_ev_sales
+                _peers = fetch_etf_peer_ev_sales(_etf, _fmp_key)
+                if len(_peers) >= 3:
+                    _t_row = df_all[df_all["Ticker"] == _t]
+                    _t_evs = _t_row["EV_Sales"].values[0] if not _t_row.empty else None
+                    if _t_evs and pd.notna(_t_evs):
+                        _ev_vals = [ev for _, ev in _peers]
+                        _rank = sum(1 for ev in _ev_vals if ev <= _t_evs) / len(_ev_vals) * 100
+                        df_all.loc[df_all["Ticker"] == _t, "PeerRankPct"] = round(_rank, 1)
+                        df_all.loc[df_all["Ticker"] == _t, "PeerETF"] = _etf
+                        df_all.loc[df_all["Ticker"] == _t, "PeerCount"] = len(_peers)
+                        df_all.loc[df_all["Ticker"] == _t, "PeerMedianEVS"] = round(float(pd.Series(_ev_vals).median()), 2)
+            except Exception:
+                pass
+else:
+    df_all["PeerRankPct"]   = None
+    df_all["PeerETF"]       = None
+    df_all["PeerCount"]     = None
+    df_all["PeerMedianEVS"] = None
 
 # ── Four Pillars (the single scoring spine) ──
 df_all["SetupStage"] = df_all.apply(calc_setup_stage, axis=1)
@@ -1499,6 +1552,52 @@ with tab_conv:
         st.plotly_chart(fig_ps, use_container_width=True)
     else:
         st.info(f"Historical {_metric_label} data loading — check back shortly or refresh.")
+
+    # ── Peer Comparison chart — EV/Sales vs ETF peer basket ──
+    grad_divider()
+    has_peer = df_conv[df_conv["PeerRankPct"].notna()].sort_values("PeerRankPct") if "PeerRankPct" in df_conv.columns else pd.DataFrame()
+    if not has_peer.empty:
+        st.markdown("#### Peer Comparison — EV/Sales vs ETF Peer Basket")
+        st.caption(
+            "Where does each stock sit vs its theme ETF's top holdings? "
+            "Left = cheapest in peer group. Right = most expensive. "
+            "Peer count shown in brackets — more peers = more reliable signal."
+        )
+        fig_peer = go.Figure()
+        has_peer.apply(
+            lambda row: fig_peer.add_trace(go.Bar(
+                x=[row["PeerRankPct"]], y=[row["Ticker"]],
+                orientation="h",
+                marker_color="#2ecc71" if row["PeerRankPct"] <= 25 else "#f39c12" if row["PeerRankPct"] <= 60 else "#e74c3c",
+                showlegend=False,
+                text=(
+                    f"  {row['PeerRankPct']:.0f}th pct  |  "
+                    f"{row['EV_Sales']:.1f}x vs {row['PeerMedianEVS']:.1f}x median"
+                    f"  [{row['PeerETF']} · {int(row['PeerCount'])} peers]"
+                ) if pd.notna(row.get("EV_Sales")) and pd.notna(row.get("PeerMedianEVS")) else f"  {row['PeerRankPct']:.0f}th pct",
+                textposition="outside",
+                hovertemplate=(
+                    f"<b>{row['Ticker']}</b><br>"
+                    f"ETF peer basket: {row.get('PeerETF', 'N/A')}<br>"
+                    + (f"EV/Sales: {row['EV_Sales']:.2f}x<br>" if pd.notna(row.get("EV_Sales")) else "")
+                    + (f"Peer median: {row['PeerMedianEVS']:.2f}x<br>" if pd.notna(row.get("PeerMedianEVS")) else "")
+                    + f"Peer rank: {row['PeerRankPct']:.0f}th percentile ({int(row['PeerCount'])} peers)<extra></extra>"
+                ),
+            )),
+            axis=1
+        )
+        fig_peer.add_vline(x=25, line_dash="dash", line_color="#2ecc71",
+                           annotation_text="Cheapest quartile", annotation_font_color="#2ecc71")
+        fig_peer.add_vline(x=50, line_dash="dot", line_color="#888",
+                           annotation_text="Peer median", annotation_font_color="#888")
+        fig_peer.update_layout(
+            height=max(350, len(has_peer) * 34),
+            xaxis=dict(range=[0, 130], title="EV/Sales percentile within ETF peer basket (lower = cheaper)"),
+            margin=dict(l=60, r=20, t=20, b=40), **DARK,
+        )
+        st.plotly_chart(fig_peer, use_container_width=True)
+    else:
+        st.info("Peer comparison data unavailable — requires FMP API key with ETF holdings access.")
 
     # Priced for Perfection warning
     if perfection:

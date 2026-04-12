@@ -1266,3 +1266,115 @@ Be direct. No filler. Base everything on the data provided."""
         return f"API error {resp.status_code}: {resp.text[:200]}"
     except (requests.RequestException, requests.exceptions.Timeout, ValueError) as e:
         return f"Request failed: {e}"
+
+
+# ── ETF Peer Comparison ───────────────────────────────────────────────────────
+
+@st.cache_data(ttl=86400, show_spinner=False)  # Cache 24h — peer baskets are stable
+def fetch_etf_peer_ev_sales(etf_ticker, fmp_key, max_holdings=20):
+    """
+    Fetch top holdings of an ETF and their EV/Sales ratios.
+    Uses FMP /etf-holder endpoint + yfinance for EV/Sales.
+    Returns list of (ticker, ev_sales) tuples, sorted by ev_sales.
+    """
+    holdings = []
+    try:
+        url = f"https://financialmodelingprep.com/stable/etf-holder?symbol={etf_ticker}&apikey={fmp_key}"
+        resp = requests.get(url, timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            # FMP returns list sorted by weight — take top N
+            for h in data[:max_holdings]:
+                t = h.get("asset") or h.get("symbol") or h.get("ticker")
+                if t and isinstance(t, str) and len(t) <= 5:
+                    holdings.append(t.upper())
+    except (requests.RequestException, requests.exceptions.Timeout, ValueError, KeyError):
+        pass
+
+    if not holdings:
+        return []
+
+    # Batch-fetch EV/Sales for all holdings
+    results = []
+    try:
+        objs = {t: yf.Ticker(t) for t in holdings}
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        def _get_ev_sales(t):
+            try:
+                info = objs[t].info
+                ev = info.get("enterpriseValue")
+                rev = info.get("totalRevenue")
+                if ev and rev and rev > 0:
+                    return (t, round(ev / rev, 2))
+            except (AttributeError, KeyError, TypeError, ValueError):
+                pass
+            return (t, None)
+
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            futures = {pool.submit(_get_ev_sales, t): t for t in holdings}
+            for future in as_completed(futures, timeout=30):
+                try:
+                    ticker, ev_sales = future.result(timeout=10)
+                    if ev_sales is not None:
+                        results.append((ticker, ev_sales))
+                except (TimeoutError, Exception):
+                    pass
+    except Exception:
+        pass
+
+    return sorted(results, key=lambda x: x[1])
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def fetch_peer_comparison(ticker_etf_pairs, fmp_key):
+    """
+    For each ticker, find its primary theme ETF, fetch peer EV/Sales,
+    and return percentile rank of each ticker within its peer group.
+
+    ticker_etf_pairs: tuple of (ticker, etf) pairs — hashable for st.cache_data
+    Returns: dict {ticker: {"peer_rank_pct": float, "etf": str,
+                             "peer_count": int, "peer_median": float}}
+    """
+    ticker_to_etf = dict(ticker_etf_pairs)
+    # Get unique ETFs needed
+    etf_set = set(v for v in ticker_to_etf.values() if v)
+    if not etf_set or not fmp_key:
+        return {}
+
+    # Fetch peer data per ETF (cached per ETF)
+    etf_peers = {}
+    for etf in etf_set:
+        peers = fetch_etf_peer_ev_sales(etf, fmp_key)
+        if peers:
+            etf_peers[etf] = peers  # [(ticker, ev_sales), ...]
+
+    results = {}
+    for ticker, etf in ticker_to_etf.items():
+        if not etf or etf not in etf_peers:
+            continue
+        peers = etf_peers[etf]
+        if len(peers) < 3:
+            continue
+        ev_sales_values = [ev for _, ev in peers]
+        median_val = float(pd.Series(ev_sales_values).median())
+
+        # Find where this ticker's EV/Sales sits in peer distribution
+        # First check if ticker is already in the peer list
+        ticker_ev = next((ev for t, ev in peers if t == ticker), None)
+
+        if ticker_ev is not None:
+            rank_pct = round(
+                sum(1 for ev in ev_sales_values if ev <= ticker_ev) / len(ev_sales_values) * 100, 1
+            )
+            results[ticker] = {
+                "peer_rank_pct": rank_pct,
+                "etf": etf,
+                "peer_count": len(peers),
+                "peer_median": median_val,
+                "peer_ev_sales": ticker_ev,
+            }
+        # If ticker not in ETF holdings, we'll use EV/Sales from df_all
+        # and rank against the peer distribution — handled in portfolio_app.py
+
+    return results
