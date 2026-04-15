@@ -9,12 +9,17 @@ StockTwits sentiment, scanner sources, and AI narrative synthesis.
 import os
 import json
 import time
+import socket
 import requests
 import numpy as np
 import pandas as pd
 import yfinance as yf
 import streamlit as st
 from datetime import datetime
+
+# Force a 10s socket timeout on ALL network calls (including yfinance blocking HTTP)
+# Without this, yf.Ticker().info can hang indefinitely when Yahoo is slow/returning 401s
+socket.setdefaulttimeout(10)
 
 from scoring import calc_rsi, calc_atr_pct, _safe, SECTOR_ETFS
 from themes import _get_anthropic_key
@@ -665,20 +670,32 @@ def fetch_fundamentals(tickers):
     _new_cache = {}
     _rate_limited = False
 
-    with ThreadPoolExecutor(max_workers=4) as pool:
-        futures = {pool.submit(_fetch_single_fundamental, t, _disk_cache): t for t in tickers}
-        results_map = {}
-        for future in as_completed(futures):
+    pool = ThreadPoolExecutor(max_workers=4)
+    futures = {pool.submit(_fetch_single_fundamental, t, _disk_cache): t for t in tickers}
+    results_map = {}
+    try:
+        for future in as_completed(futures, timeout=45):
             t = futures[future]
             try:
-                row, cache_entry, rl = future.result(timeout=15)
+                row, cache_entry, rl = future.result(timeout=12)
                 results_map[t] = row
                 if cache_entry:
                     _new_cache[t] = cache_entry
                 if rl:
                     _rate_limited = True
-            except (requests.RequestException, requests.exceptions.Timeout, ValueError, KeyError):
-                results_map[t] = {"Ticker": t}
+            except Exception:
+                results_map[t] = _disk_cache.get(t, {"Ticker": t})
+                if t in _disk_cache:
+                    results_map[t]["Ticker"] = t
+    except TimeoutError:
+        # Some tickers timed out — use disk cache for missing ones
+        for t in tickers:
+            if t not in results_map:
+                results_map[t] = _disk_cache.get(t, {"Ticker": t})
+                if t in _disk_cache:
+                    results_map[t]["Ticker"] = t
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
 
     # Preserve original ticker order
     results = [results_map.get(t, {"Ticker": t}) for t in tickers]
@@ -848,18 +865,26 @@ def _fetch_single_extra(t):
 @st.cache_data(ttl=1800, show_spinner=False)
 def fetch_extras(tickers):
     from concurrent.futures import ThreadPoolExecutor, as_completed
+    _empty = lambda t: {"Ticker": t, "InsiderSignal": "N/A", "InsiderNet": 0,
+                        "InsiderBuyScore": 0.0, "InsiderSellScore": 0.0,
+                        "InsiderCluster": False, "Headlines": [], "InsiderBuys": []}
     results_map = {}
-    with ThreadPoolExecutor(max_workers=4) as pool:
-        futures = {pool.submit(_fetch_single_extra, t): t for t in tickers}
-        for future in as_completed(futures):
+    pool = ThreadPoolExecutor(max_workers=4)
+    futures = {pool.submit(_fetch_single_extra, t): t for t in tickers}
+    try:
+        for future in as_completed(futures, timeout=45):
             t = futures[future]
             try:
-                results_map[t] = future.result(timeout=15)
-            except (TimeoutError, requests.RequestException, requests.exceptions.Timeout, KeyError):
-                results_map[t] = {"Ticker": t, "InsiderSignal": "N/A", "InsiderNet": 0,
-                                  "InsiderBuyScore": 0.0, "InsiderSellScore": 0.0,
-                                  "InsiderCluster": False, "Headlines": [], "InsiderBuys": []}
-    return pd.DataFrame([results_map.get(t, {"Ticker": t}) for t in tickers])
+                results_map[t] = future.result(timeout=12)
+            except Exception:
+                results_map[t] = _empty(t)
+    except TimeoutError:
+        for t in tickers:
+            if t not in results_map:
+                results_map[t] = _empty(t)
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
+    return pd.DataFrame([results_map.get(t, _empty(t)) for t in tickers])
 
 
 # ── StockTwits Sentiment ─────────────────────────────────────────────────────
