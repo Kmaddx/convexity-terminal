@@ -537,11 +537,14 @@ def calc_market_env_score(env):
     pillars["Trend"] = {"score": round(trend_score), "weight": 25}
 
     # ── 3. Breadth (0-100, sector participation) ──
-    above_50d = env.get("sectors_above_50d", 6)
-    pos_1d = env.get("sectors_positive_1d", 6)
+    above_50d = env.get("sectors_above_50d")
+    pos_1d = env.get("sectors_positive_1d")
     total_sectors = len(SECTOR_ETFS)
-    breadth_score = (above_50d / total_sectors) * 60
-    breadth_score += (pos_1d / total_sectors) * 40
+    if above_50d is None or pos_1d is None:
+        breadth_score = 50  # neutral when sector data unavailable
+    else:
+        breadth_score = (above_50d / total_sectors) * 60
+        breadth_score += (pos_1d / total_sectors) * 40
     pillars["Breadth"] = {"score": round(breadth_score), "weight": 20}
 
     # ── 4. Momentum (0-100, sector strength) ──
