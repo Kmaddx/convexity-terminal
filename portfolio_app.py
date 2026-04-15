@@ -1958,8 +1958,12 @@ with tab_themes:
             etf_3m = etf_sub["Ret3m"].dropna().mean() if etf_sub["Ret3m"].notna().any() else None
             if etf_1m is None or etf_3m is None:
                 continue
-            rs_1m = round(etf_1m - spy_ret.get("1m", 0), 1)
-            rs_3m = round(etf_3m - spy_ret.get("3m", 0), 1)
+            _spy_1m = spy_ret.get("1m", 0)
+            _spy_3m = spy_ret.get("3m", 0)
+            _spy_1m = float(_spy_1m.item()) if hasattr(_spy_1m, "item") else float(_spy_1m or 0)
+            _spy_3m = float(_spy_3m.item()) if hasattr(_spy_3m, "item") else float(_spy_3m or 0)
+            rs_1m = round(etf_1m - _spy_1m, 1)
+            rs_3m = round(etf_3m - _spy_3m, 1)
             if rs_1m > rs_3m + 1:
                 momentum_status = "Accelerating"
             elif rs_1m < rs_3m - 1:

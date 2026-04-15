@@ -177,14 +177,16 @@ def fetch_spy_returns():
         if df.empty:
             return {}
         close = df["Close"].squeeze()
-        price = close.iloc[-1]
+        if isinstance(close, pd.DataFrame):
+            close = close.iloc[:, 0]  # take first column if still 2D
+        price = float(close.iloc[-1])
         ret = {}
         if len(close) >= 22:
-            ret["1m"] = round(((price / close.iloc[-22]) - 1) * 100, 1)
+            ret["1m"] = round(((price / float(close.iloc[-22])) - 1) * 100, 1)
         if len(close) >= 63:
-            ret["3m"] = round(((price / close.iloc[-63]) - 1) * 100, 1)
+            ret["3m"] = round(((price / float(close.iloc[-63])) - 1) * 100, 1)
         if len(close) >= 126:
-            ret["6m"] = round(((price / close.iloc[-126]) - 1) * 100, 1)
+            ret["6m"] = round(((price / float(close.iloc[-126])) - 1) * 100, 1)
         return ret
     except (requests.RequestException, requests.exceptions.Timeout, KeyError):
         return {}
