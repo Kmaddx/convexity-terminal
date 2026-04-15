@@ -1056,8 +1056,10 @@ with tab_dash:
 
         with det_c2:
             st.markdown("**Breadth**")
-            st.markdown(f"- Sectors > 50d MA: **{market_env.get('sectors_above_50d', '?')}** / 11")
-            st.markdown(f"- Sectors positive today: **{market_env.get('sectors_positive_1d', '?')}** / 11")
+            _n_sectors = len(market_env.get("sectors", {}))
+            _sec_denom = f"/ {_n_sectors}" if _n_sectors > 0 else "(no data)"
+            st.markdown(f"- Sectors > 50d MA: **{market_env.get('sectors_above_50d', 'N/A')}** {_sec_denom}")
+            st.markdown(f"- Sectors positive today: **{market_env.get('sectors_positive_1d', 'N/A')}** {_sec_denom}")
             if market_env.get("sector_leader"):
                 st.markdown(f"- Leader (5d): **{market_env.get('sector_leader')}**")
             if market_env.get("sector_laggard"):

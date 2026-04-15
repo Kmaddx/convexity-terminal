@@ -263,8 +263,12 @@ def fetch_market_environment():
         except (requests.RequestException, requests.exceptions.Timeout, KeyError, IndexError, ValueError):
             pass
         env["sectors"] = sector_data
-        env["sectors_above_50d"] = sum(1 for s in sector_data.values() if s["above_50d"])
-        env["sectors_positive_1d"] = sum(1 for s in sector_data.values() if s["ret_1d"] > 0)
+        if sector_data:
+            env["sectors_above_50d"] = sum(1 for s in sector_data.values() if s["above_50d"])
+            env["sectors_positive_1d"] = sum(1 for s in sector_data.values() if s["ret_1d"] > 0)
+        else:
+            env["sectors_above_50d"] = None
+            env["sectors_positive_1d"] = None
         env["sector_leader"] = max(sector_data.items(), key=lambda x: x[1]["ret_5d"])[0] if sector_data else None
         env["sector_laggard"] = min(sector_data.items(), key=lambda x: x[1]["ret_5d"])[0] if sector_data else None
 
