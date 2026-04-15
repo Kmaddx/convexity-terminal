@@ -155,18 +155,24 @@ def fetch_price_data(tickers):
     return pd.DataFrame(results)
 
 
+_spy_daily_fallback = (pd.Series(dtype=float), pd.Series(dtype=float))
+
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_spy_daily():
     """Fetch SPY 1y daily close & daily returns for down-day RS analysis."""
+    global _spy_daily_fallback
     try:
         df = yf.download("SPY", period="1y", interval="1d", progress=False, auto_adjust=True)
         if df.empty:
-            return pd.Series(dtype=float), pd.Series(dtype=float)
+            return _spy_daily_fallback  # return last good data if available
         close = df["Close"].squeeze()
+        if isinstance(close, pd.DataFrame):
+            close = close.iloc[:, 0]
         daily_ret = close.pct_change().dropna()
+        _spy_daily_fallback = (close, daily_ret)  # remember last good fetch
         return close, daily_ret
     except (requests.RequestException, requests.exceptions.Timeout, KeyError):
-        return pd.Series(dtype=float), pd.Series(dtype=float)
+        return _spy_daily_fallback
 
 
 @st.cache_data(ttl=300, show_spinner=False)
