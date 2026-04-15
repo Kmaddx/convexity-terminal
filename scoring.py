@@ -617,10 +617,11 @@ def calc_market_env_score(env):
         warnings.append(f"Volatility spiking — VIX at {vix:.0f} and rising")
 
     # Narrow breadth
-    if above_50d <= 3:
-        warnings.append(f"Narrow breadth — only {above_50d}/11 sectors above 50d MA")
-    elif above_50d <= 5 and pos_1d <= 3:
-        warnings.append(f"Breadth deteriorating — {above_50d}/11 above 50d, only {pos_1d}/11 positive today")
+    if above_50d is not None and pos_1d is not None:
+        if above_50d <= 3:
+            warnings.append(f"Narrow breadth — only {above_50d}/11 sectors above 50d MA")
+        elif above_50d <= 5 and pos_1d <= 3:
+            warnings.append(f"Breadth deteriorating — {above_50d}/11 above 50d, only {pos_1d}/11 positive today")
 
     # Below key MAs
     below_mas = []
@@ -655,7 +656,7 @@ def calc_market_env_score(env):
     elif vix <= 20 and not vix_rising:
         tailwinds.append(f"Contained volatility — VIX at {vix:.0f} and stable")
 
-    if above_50d >= 9:
+    if above_50d is not None and above_50d >= 9:
         tailwinds.append(f"Broad participation — {above_50d}/11 sectors above 50d MA")
 
     above_mas = []
