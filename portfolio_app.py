@@ -642,7 +642,7 @@ with _tb3:
     deep_dive_ticker = st.selectbox("Deep Dive", ["--"] + sorted(st.session_state.tickers),
                                      key="deep_dive", label_visibility="collapsed")
 with _tb4:
-    if st.button("Refresh", use_container_width=True, key="btn_refresh_top"):
+    if st.button("Refresh", width="stretch", key="btn_refresh_top"):
         st.cache_data.clear()
         st.rerun()
 
@@ -815,7 +815,7 @@ if deep_dive_ticker != "--" and deep_dive_ticker in df_all["Ticker"].values:
             )
             fig_dd.update_yaxes(title_text="Price ($)", row=1, col=1, gridcolor="#21262d")
             fig_dd.update_yaxes(title_text="Vol", row=2, col=1, gridcolor="#21262d")
-            st.plotly_chart(fig_dd, use_container_width=True)
+            st.plotly_chart(fig_dd, width="stretch")
     except (AttributeError, ValueError, KeyError, TypeError):
         pass
 
@@ -839,7 +839,7 @@ if deep_dive_ticker != "--" and deep_dive_ticker in df_all["Ticker"].values:
                 legend=dict(orientation="h", yanchor="bottom", y=1.02),
                 margin=dict(l=50, r=20, t=30, b=30), **DARK,
             )
-            st.plotly_chart(fig_sh, use_container_width=True)
+            st.plotly_chart(fig_sh, width="stretch")
 
     grad_divider()
 
@@ -1302,7 +1302,7 @@ with tab_dash:
     st.dataframe(
         overview_styled,
         column_config=_overview_col_config,
-        use_container_width=True, hide_index=True,
+        width="stretch", hide_index=True,
         height=min(800, 38 * len(overview_disp) + 40),
     )
     st.download_button("Export Overview CSV",
@@ -1342,7 +1342,7 @@ with tab_dash:
         yaxis=dict(range=[15,90], title="RSI (14)", gridcolor="#21262d"),
         margin=dict(l=60,r=20,t=20,b=60), **DARK,
     )
-    st.plotly_chart(fig5, use_container_width=True)
+    st.plotly_chart(fig5, width="stretch")
 
     grad_divider()
     st.caption(f"Data as of {_data_ts}")
@@ -1500,7 +1500,7 @@ with tab_conv:
     )
     fig_pillars.add_hline(y=50, line_dash="dash", line_color="#f39c12",
                           annotation_text="Alignment threshold", annotation_font_color="#f39c12")
-    st.plotly_chart(fig_pillars, use_container_width=True)
+    st.plotly_chart(fig_pillars, width="stretch")
 
     grad_divider()
 
@@ -1549,7 +1549,7 @@ with tab_conv:
             xaxis=dict(range=[0, 130], title=f"Position in 3-year {_metric_label} range (%)"),
             margin=dict(l=60, r=20, t=20, b=40), **DARK,
         )
-        st.plotly_chart(fig_ps, use_container_width=True)
+        st.plotly_chart(fig_ps, width="stretch")
     else:
         st.info(f"Historical {_metric_label} data loading — check back shortly or refresh.")
 
@@ -1595,7 +1595,7 @@ with tab_conv:
             xaxis=dict(range=[0, 130], title="EV/Sales percentile within ETF peer basket (lower = cheaper)"),
             margin=dict(l=60, r=20, t=20, b=40), **DARK,
         )
-        st.plotly_chart(fig_peer, use_container_width=True)
+        st.plotly_chart(fig_peer, width="stretch")
     else:
         st.info("Peer comparison data unavailable — requires FMP API key with ETF holdings access.")
 
@@ -1740,7 +1740,7 @@ with tab_conv:
                                xaxis=dict(range=[0,115], title="Score"),
                                yaxis=dict(autorange="reversed"),
                                margin=dict(l=60,r=20,t=20,b=40), showlegend=False, **DARK)
-        st.plotly_chart(fig_conv, use_container_width=True)
+        st.plotly_chart(fig_conv, width="stretch")
         conv_tbl = conv[["Ticker","Price","ConvexityScore","PillarTech","PillarFund","PillarTheme","PillarNarr","AnalystUpside","NextEarnings"]].copy()
         conv_tbl["4-Pillar"] = ((conv_tbl["PillarTech"] + conv_tbl["PillarFund"] +
                                  conv_tbl["PillarTheme"] + conv_tbl["PillarNarr"]) / 4).round(0)
@@ -1781,7 +1781,7 @@ with tab_conv:
                                xaxis=dict(range=[0,115], title="Score"),
                                yaxis=dict(autorange="reversed"),
                                margin=dict(l=60,r=20,t=20,b=40), showlegend=False, **DARK)
-        st.plotly_chart(fig_mom, use_container_width=True)
+        st.plotly_chart(fig_mom, width="stretch")
         mom_tbl = mom[["Ticker","Price","RSI","Pos52","NextEarnings","MomentumScore"]].copy()
         mom_tbl["NextEarnings"] = mom_tbl["NextEarnings"].fillna("N/A")
         mom_tbl = mom_tbl.rename(columns={"Pos52":"52wk Pos","NextEarnings":"Next Earnings","MomentumScore":"Score"})
@@ -1847,7 +1847,7 @@ with tab_themes:
             current_theme = ", ".join(_auto_themes) if _auto_themes else "Other"
             st.caption(f"Currently in: {current_theme}")
             target_theme = st.selectbox("Move to", _all_theme_names, key="theme_target")
-            if st.button("Move", use_container_width=True, key="theme_move_btn"):
+            if st.button("Move", width="stretch", key="theme_move_btn"):
                 td = themes_data.get("themes", {})
                 for th in td:
                     if move_ticker in td[th].get("tickers", []):
@@ -1862,7 +1862,7 @@ with tab_themes:
         with mgmt_col2:
             st.markdown("**Create new theme**")
             new_theme = st.text_input("Theme name", placeholder="e.g. Drones, Quantum", key="new_theme_input")
-            if st.button("Create Theme", use_container_width=True, key="theme_create_btn"):
+            if st.button("Create Theme", width="stretch", key="theme_create_btn"):
                 if new_theme and new_theme not in themes_data.get("themes", {}):
                     themes_data.setdefault("themes", {})[new_theme] = {"etfs": [], "tickers": []}
                     st.session_state.themes = themes_data
@@ -1936,7 +1936,7 @@ with tab_themes:
                         legend=dict(orientation="h", yanchor="bottom", y=1.02),
                         margin=dict(l=50, r=30, t=50, b=50), **DARK,
                     )
-                    st.plotly_chart(fig_scatter, use_container_width=True)
+                    st.plotly_chart(fig_scatter, width="stretch")
     else:
         st.info("ETF benchmark data not available for momentum map.")
 
@@ -2123,7 +2123,7 @@ with tab_themes:
         )
         fig_th.add_hline(y=50, line_dash="dot", line_color="#555", annotation_text="Neutral",
                          annotation_position="bottom right", annotation_font_color="#666")
-        st.plotly_chart(fig_th, use_container_width=True)
+        st.plotly_chart(fig_th, width="stretch")
 
     # ── (d) Theme Drilldown — flat table grouped by theme ──
     grad_divider()
@@ -2281,7 +2281,7 @@ with tab_charts:
                 )
                 fig_ch.update_yaxes(title_text="$", row=1, col=1, gridcolor="#21262d")
                 fig_ch.update_yaxes(row=2, col=1, gridcolor="#21262d")
-                st.plotly_chart(fig_ch, use_container_width=True)
+                st.plotly_chart(fig_ch, width="stretch")
         except (AttributeError, ValueError, KeyError, TypeError):
             st.caption(f"{chart_ticker}: chart unavailable")
 
@@ -2340,7 +2340,7 @@ with tab_str:
             legend=dict(orientation="h", yanchor="bottom", y=1.02),
             margin=dict(l=60, r=20, t=50, b=40), **DARK,
         )
-        st.plotly_chart(fig_rs, use_container_width=True)
+        st.plotly_chart(fig_rs, width="stretch")
 
         # ── Down-Day Win Rate scatter ──
         grad_divider()
@@ -2376,7 +2376,7 @@ with tab_str:
             yaxis=dict(title="Recent Down-Day Excess Return (%/day)", gridcolor="#21262d"),
             margin=dict(l=60, r=20, t=20, b=60), **DARK,
         )
-        st.plotly_chart(fig_dd, use_container_width=True)
+        st.plotly_chart(fig_dd, width="stretch")
 
         # ── RS Table (colour-coded) ──
         grad_divider()
@@ -2404,7 +2404,7 @@ with tab_str:
                 "1m vs SPY": "{:+.1f}%", "3m vs SPY": "{:+.1f}%",
             })
         )
-        st.dataframe(styled_rs, use_container_width=True, hide_index=True)
+        st.dataframe(styled_rs, width="stretch", hide_index=True)
 
         if spy_ret:
             st.caption(f"SPY returns — 1m: {spy_ret.get('1m', 'N/A'):+.1f}%  |  3m: {spy_ret.get('3m', 'N/A'):+.1f}%  |  6m: {spy_ret.get('6m', 'N/A'):+.1f}%")
@@ -2473,7 +2473,7 @@ with tab_sig:
         earn_data["EarningsDate"] = pd.to_datetime(earn_data["NextEarnings"], errors="coerce")
         earn_data = earn_data.dropna(subset=["EarningsDate"]).sort_values("EarningsDate")
         today_dt = pd.Timestamp.now().normalize()
-        earn_upcoming = earn_data[earn_data["EarningsDate"] >= today_dt - pd.Timedelta(days=1)]
+        earn_upcoming = earn_data[earn_data["EarningsDate"] >= today_dt - pd.Timedelta(days=1)].copy()
         if not earn_upcoming.empty:
             fig_earn = go.Figure()
             earn_upcoming["DaysAway"] = (earn_upcoming["EarningsDate"] - today_dt).dt.days
@@ -2506,7 +2506,7 @@ with tab_sig:
                 xaxis=dict(title="Date", gridcolor="#21262d"),
                 margin=dict(l=60, r=40, t=20, b=40), **DARK,
             )
-            st.plotly_chart(fig_earn, use_container_width=True)
+            st.plotly_chart(fig_earn, width="stretch")
             st.caption("Red = this week  |  Orange = next 3 weeks  |  Blue = later")
         else:
             st.info("No upcoming earnings dates found.")
@@ -2580,7 +2580,7 @@ with tab_sig:
 
     # Analyst price targets chart
     st.markdown("#### Analyst Price Targets")
-    tgt_df = df_sig[df_sig["TargetMean"].notna() & (df_sig["TargetMean"] > 0)]
+    tgt_df = df_sig[df_sig["TargetMean"].notna() & (df_sig["TargetMean"] > 0)].copy()
     if not tgt_df.empty:
         fig_tgt = go.Figure()
         tgt_df["TargetLow"] = tgt_df.apply(lambda r: r.get("TargetLow") or r["Price"] * 0.9, axis=1)
@@ -2609,7 +2609,7 @@ with tab_sig:
         )
         fig_tgt.update_layout(height=380, yaxis_title="Price ($)",
                                margin=dict(l=40,r=20,t=20,b=40), showlegend=False, **DARK)
-        st.plotly_chart(fig_tgt, use_container_width=True)
+        st.plotly_chart(fig_tgt, width="stretch")
     else:
         st.info("No analyst price targets available.")
 
@@ -2742,7 +2742,7 @@ with tab_sig:
         with col_all:
             st.markdown("#### Analyze full portfolio")
             st.caption("~30 sec, costs ~$0.02 total")
-            run_all = st.button("Run All", use_container_width=True)
+            run_all = st.button("Run All", width="stretch")
 
         def build_summary(t):
             r  = df_price[df_price["Ticker"] == t].iloc[0]
@@ -2764,7 +2764,7 @@ with tab_sig:
                 api_key=api_key,
             )
 
-        if st.button(f"Analyze {selected_ticker}", use_container_width=True):
+        if st.button(f"Analyze {selected_ticker}", width="stretch"):
             with st.spinner(f"Generating brief for ${selected_ticker}..."):
                 result = build_summary(selected_ticker)
             st.markdown(result)
@@ -2825,7 +2825,7 @@ with tab_scan:
         "Yahoo Trending": ("trending", None),
     }
 
-    run_scan = st.button("Run Scan", type="primary", use_container_width=True)
+    run_scan = st.button("Run Scan", type="primary", width="stretch")
 
     if run_scan:
         with st.spinner("Sourcing universe from selected feeds..."):
@@ -2948,7 +2948,7 @@ with tab_scan:
                     active_fmt = {k: v for k, v in fmt_dict.items() if k in available_cols}
                     styled = styled.format(active_fmt, na_rep="—")
 
-                    st.dataframe(styled, hide_index=True, use_container_width=True)
+                    st.dataframe(styled, hide_index=True, width="stretch")
 
                     # ── Add to Watchlist ──
                     grad_divider()
@@ -3003,7 +3003,7 @@ def _ticker_management_fragment():
     st.caption(f"Active watchlist: **{st.session_state.active_watchlist}** ({len(st.session_state.tickers)} tickers)")
 
     _add_t = st.text_input("Add ticker", placeholder="e.g. NVDA", key="settings_add_ticker").upper().strip()
-    if st.button("Add Ticker", use_container_width=True, key="settings_btn_add"):
+    if st.button("Add Ticker", width="stretch", key="settings_btn_add"):
         if _add_t and _add_t not in st.session_state.tickers:
             st.session_state.tickers.append(_add_t)
             st.session_state.watchlists[st.session_state.active_watchlist] = st.session_state.tickers
@@ -3013,7 +3013,7 @@ def _ticker_management_fragment():
             st.warning(f"{_add_t} already in list.")
 
     _rem_t = st.selectbox("Remove ticker", ["--"] + sorted(st.session_state.tickers), key="settings_remove")
-    if st.button("Remove Ticker", use_container_width=True, key="settings_btn_remove"):
+    if st.button("Remove Ticker", width="stretch", key="settings_btn_remove"):
         if _rem_t != "--":
             st.session_state.tickers.remove(_rem_t)
             st.session_state.watchlists[st.session_state.active_watchlist] = st.session_state.tickers
@@ -3043,7 +3043,7 @@ with tab_settings:
         st.markdown("#### Manage Watchlists")
 
         _new_wl = st.text_input("New watchlist name", placeholder="e.g. Holdings", key="settings_new_wl")
-        if st.button("Create Watchlist", use_container_width=True, key="settings_btn_create_wl"):
+        if st.button("Create Watchlist", width="stretch", key="settings_btn_create_wl"):
             if _new_wl and _new_wl not in st.session_state.watchlists:
                 st.session_state.watchlists[_new_wl] = []
                 save_watchlists(st.session_state.watchlists)
@@ -3059,7 +3059,7 @@ with tab_settings:
         st.caption("Export your watchlist from Yahoo Finance (CSV), then upload here.")
         _uploaded = st.file_uploader("Upload CSV", type=["csv"], key="settings_csv", label_visibility="collapsed")
         _import_target = st.selectbox("Import into", wl_names, key="settings_import_target")
-        if st.button("Import", use_container_width=True, key="settings_btn_import") and _uploaded:
+        if st.button("Import", width="stretch", key="settings_btn_import") and _uploaded:
             _imported = parse_yahoo_csv(_uploaded)
             if _imported:
                 _existing = st.session_state.watchlists.get(_import_target, [])
@@ -3078,7 +3078,7 @@ with tab_settings:
 
         # Rename
         _rename_val = st.text_input("Rename current watchlist", value=st.session_state.active_watchlist, key="settings_rename")
-        if st.button("Rename", use_container_width=True, key="settings_btn_rename"):
+        if st.button("Rename", width="stretch", key="settings_btn_rename"):
             if _rename_val and _rename_val != st.session_state.active_watchlist and _rename_val not in st.session_state.watchlists:
                 _tickers_copy = st.session_state.watchlists.pop(st.session_state.active_watchlist)
                 st.session_state.watchlists[_rename_val] = _tickers_copy
@@ -3089,7 +3089,7 @@ with tab_settings:
 
         # Duplicate
         _dup_name = st.text_input("Duplicate as", placeholder="e.g. Watchlist Copy", key="settings_dup")
-        if st.button("Duplicate Current", use_container_width=True, key="settings_btn_dup"):
+        if st.button("Duplicate Current", width="stretch", key="settings_btn_dup"):
             if _dup_name and _dup_name not in st.session_state.watchlists:
                 st.session_state.watchlists[_dup_name] = st.session_state.tickers.copy()
                 save_watchlists(st.session_state.watchlists)
@@ -3100,7 +3100,7 @@ with tab_settings:
             _del_wl = st.selectbox("Delete watchlist",
                                     ["--"] + [w for w in wl_names if w != st.session_state.active_watchlist],
                                     key="settings_del")
-            if st.button("Delete", use_container_width=True, key="settings_btn_del"):
+            if st.button("Delete", width="stretch", key="settings_btn_del"):
                 if _del_wl != "--" and _del_wl in st.session_state.watchlists:
                     del st.session_state.watchlists[_del_wl]
                     save_watchlists(st.session_state.watchlists)
@@ -3115,6 +3115,6 @@ with tab_settings:
         st.caption(f"Cache TTL — Price: 5 min | Fund: 30 min | Sentiment: 15 min")
         st.caption(f"Last load: {datetime.now().strftime('%H:%M:%S')}")
     with _info_c2:
-        if st.button("Clear Cache & Reload", use_container_width=True, key="settings_clear_cache"):
+        if st.button("Clear Cache & Reload", width="stretch", key="settings_clear_cache"):
             st.cache_data.clear()
             st.rerun()
