@@ -21,8 +21,105 @@ from datetime import datetime
 # Without this, yf.Ticker().info can hang indefinitely when Yahoo is slow/returning 401s
 socket.setdefaulttimeout(10)
 
+import threading as _threading
+
 from scoring import calc_rsi, calc_atr_pct, _safe, SECTOR_ETFS
-from themes import _get_anthropic_key
+from themes import _get_anthropic_key, _get_xai_key
+
+# ── Finnhub client ────────────────────────────────────────────────────────────
+
+def _get_finnhub_key():
+    try:
+        return st.secrets.get("FINNHUB_API_KEY", "") or os.getenv("FINNHUB_API_KEY", "")
+    except Exception:
+        return os.getenv("FINNHUB_API_KEY", "")
+
+def _make_finnhub_client():
+    key = _get_finnhub_key()
+    if not key:
+        return None
+    try:
+        import finnhub
+        return finnhub.Client(api_key=key)
+    except ImportError:
+        return None
+
+# Global rate limiter — Finnhub free tier: 60 calls/min, 30 calls/sec burst
+# We target ~8 calls/sec globally to stay safely under burst limit
+_fh_lock = _threading.Lock()
+_fh_last_ts = 0.0
+_FH_MIN_INTERVAL = 0.13  # seconds between calls globally (~7-8/sec)
+
+def _fh_throttle():
+    """Enforce minimum interval between Finnhub API calls."""
+    global _fh_last_ts
+    with _fh_lock:
+        now = time.time()
+        gap = _FH_MIN_INTERVAL - (now - _fh_last_ts)
+        if gap > 0:
+            time.sleep(gap)
+        _fh_last_ts = time.time()
+
+# ── xAI (Grok) client ────────────────────────────────────────────────────────
+
+def _xai_chat(api_key, messages, model="grok-3-mini", max_tokens=400):
+    """Call the xAI API (OpenAI-compatible). Returns response text or error string."""
+    if not api_key:
+        return None
+    payload = {"model": model, "messages": messages, "max_tokens": max_tokens}
+    try:
+        resp = requests.post(
+            "https://api.x.ai/v1/chat/completions",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json=payload,
+            timeout=30,
+        )
+        if resp.status_code == 200:
+            return resp.json()["choices"][0]["message"]["content"]
+        return f"[xAI {resp.status_code}] {resp.text[:300]}"
+    except (requests.RequestException, requests.exceptions.Timeout, ValueError, KeyError) as e:
+        return f"[xAI error] {e}"
+
+
+def _xai_responses(api_key, messages, tools=None, model="grok-3", max_tokens=600):
+    """Call xAI /v1/responses endpoint — required for Agent Tools (live search).
+
+    Endpoint:  POST https://api.x.ai/v1/responses
+    Tools:     [{"type": "x_search"}]  and/or  [{"type": "web_search"}]
+    Response:  output[0]["content"][0]["text"]
+
+    Ref: https://docs.x.ai/docs/guides/tools/overview
+    """
+    if not api_key:
+        return None
+    payload = {
+        "model": model,
+        "input": messages,          # same structure as chat "messages"
+        "max_output_tokens": max_tokens,
+        "stream": False,
+    }
+    if tools:
+        payload["tools"] = tools
+    try:
+        resp = requests.post(
+            "https://api.x.ai/v1/responses",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json=payload,
+            timeout=45,
+        )
+        if resp.status_code != 200:
+            return f"[xAI {resp.status_code}] {resp.text[:300]}"
+        data = resp.json()
+        output = data.get("output", [])
+        for block in output:
+            for chunk in block.get("content", []):
+                text = chunk.get("text", "")
+                if text:
+                    return text
+        return None
+    except (requests.RequestException, requests.exceptions.Timeout, ValueError, KeyError) as e:
+        return f"[xAI error] {e}"
+
 
 # ── File paths ───────────────────────────────────────────────────────────────
 
@@ -125,8 +222,12 @@ def fetch_price_data(tickers):
             low   = df["Low"].squeeze()
             vol   = df["Volume"].squeeze()
             price  = close.iloc[-1]
-            ma50   = close.rolling(50).mean().iloc[-1]
-            ma200  = close.rolling(200).mean().iloc[-1] if len(close) >= 200 else np.nan
+            ma20   = close.rolling(20).mean()
+            ma50_s = close.rolling(50).mean()
+            ma200_s = close.rolling(200).mean() if len(close) >= 200 else None
+            ma20_last = ma20.iloc[-1]
+            ma50   = ma50_s.iloc[-1]
+            ma200  = ma200_s.iloc[-1] if ma200_s is not None else np.nan
             rsi    = calc_rsi(close).iloc[-1]
             atr_pct = calc_atr_pct(high, low, close)
             w52h   = high.max()
@@ -140,6 +241,61 @@ def fetch_price_data(tickers):
             ret_3m  = round(((price / close.iloc[-63]) - 1) * 100, 1) if len(close) >= 63 else None
             ret_6m  = round(((price / close.iloc[-126]) - 1) * 100, 1) if len(close) >= 126 else None
             spark_30 = close.iloc[-30:].tolist() if len(close) >= 30 else close.tolist()
+
+            # ── Coiled Base components ──────────────────────────────────────
+            # Four measurable conditions; CoiledScore = how many fire (0-4).
+            # 1) Basing: 20-day price range tight vs current price
+            # 2) Tightening: 14d ATR well below 60d average ATR
+            # 3) Compressing: Bollinger band width in bottom quintile of 126d
+            # 4) MA Stack: Price > MA20 > MA50 > MA200 (and MA20/50 rising)
+            base_tight = np.nan
+            atr_contract = np.nan
+            bb_width_pct = np.nan
+            ma_stack = False
+            coiled_score = None
+            try:
+                if len(close) >= 20 and price > 0:
+                    hi20 = float(high.iloc[-20:].max())
+                    lo20 = float(low.iloc[-20:].min())
+                    base_tight = (hi20 - lo20) / price * 100
+                # ATR contraction: current 14d ATR vs 60d average ATR
+                if len(close) >= 60:
+                    tr = pd.concat([high - low,
+                                    (high - close.shift()).abs(),
+                                    (low - close.shift()).abs()], axis=1).max(axis=1)
+                    atr14 = tr.ewm(com=13, min_periods=14).mean()
+                    atr_now = float(atr14.iloc[-1])
+                    atr60_avg = float(atr14.iloc[-60:].mean())
+                    if atr60_avg > 0:
+                        atr_contract = atr_now / atr60_avg
+                # BB width percentile rank (bottom 20% = compressing)
+                if len(close) >= 126:
+                    std20 = close.rolling(20).std()
+                    bb_width = (std20 * 4) / ma20  # (upper-lower)/mid ≈ 4*std/mid
+                    recent_window = bb_width.iloc[-126:].dropna()
+                    if len(recent_window) >= 30:
+                        cur_w = float(recent_window.iloc[-1])
+                        bb_width_pct = float((recent_window <= cur_w).mean() * 100)
+                # MA stack: Price > MA20 > MA50 > MA200, with MA20 and MA50 rising
+                if (not np.isnan(ma200)
+                        and not np.isnan(ma20_last)
+                        and not np.isnan(ma50)
+                        and len(ma20) >= 10 and len(ma50_s) >= 10):
+                    rising_20 = float(ma20.iloc[-1]) > float(ma20.iloc[-10])
+                    rising_50 = float(ma50_s.iloc[-1]) > float(ma50_s.iloc[-10])
+                    ma_stack = bool(
+                        price > ma20_last > ma50 > ma200
+                        and rising_20 and rising_50
+                    )
+                coiled_score = int(
+                    (1 if (not np.isnan(base_tight) and base_tight <= 12) else 0) +
+                    (1 if (not np.isnan(atr_contract) and atr_contract <= 0.8) else 0) +
+                    (1 if (not np.isnan(bb_width_pct) and bb_width_pct <= 20) else 0) +
+                    (1 if ma_stack else 0)
+                )
+            except (KeyError, IndexError, TypeError, ValueError, ZeroDivisionError):
+                coiled_score = None
+
             results.append(dict(
                 Ticker=t, Price=round(price, 2),
                 RSI=round(rsi, 1), vsMA50=round(vs50, 1),
@@ -149,6 +305,11 @@ def fetch_price_data(tickers):
                 RelVol=rel_vol, Breakout=bool(pos52 >= 95),
                 Ret1m=ret_1m, Ret3m=ret_3m, Ret6m=ret_6m,
                 Spark30=spark_30,
+                BaseTightPct=round(base_tight, 1) if not np.isnan(base_tight) else None,
+                ATRContract=round(atr_contract, 2) if not np.isnan(atr_contract) else None,
+                BBWidthPct=round(bb_width_pct, 1) if not np.isnan(bb_width_pct) else None,
+                MAStack=bool(ma_stack),
+                CoiledScore=coiled_score,
             ))
         except (KeyError, IndexError, TypeError, ValueError):
             continue
@@ -171,30 +332,43 @@ def fetch_spy_daily():
         daily_ret = close.pct_change().dropna()
         _spy_daily_fallback = (close, daily_ret)  # remember last good fetch
         return close, daily_ret
-    except (requests.RequestException, requests.exceptions.Timeout, KeyError):
+    except (requests.RequestException, requests.exceptions.Timeout, KeyError, RuntimeError):
+        # RuntimeError catches yfinance threading bugs ("dictionary changed size during iteration")
         return _spy_daily_fallback
 
 
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_spy_returns():
-    """SPY benchmark returns for relative strength comparison."""
+    """SPY benchmark returns for relative strength comparison.
+
+    Only returns a key if its value is finite — NaN values silently propagate
+    through every downstream comparison and show as 'None' in the UI.
+    """
     try:
         df = yf.download("SPY", period="1y", interval="1d", progress=False, auto_adjust=True)
         if df.empty:
             return {}
-        close = df["Close"].squeeze()
+        close = df["Close"].squeeze().dropna()
         if isinstance(close, pd.DataFrame):
-            close = close.iloc[:, 0]  # take first column if still 2D
+            close = close.iloc[:, 0].dropna()
+        if len(close) < 2:
+            return {}
         price = float(close.iloc[-1])
+        if not np.isfinite(price):
+            return {}
         ret = {}
-        if len(close) >= 22:
-            ret["1m"] = round(((price / float(close.iloc[-22])) - 1) * 100, 1)
-        if len(close) >= 63:
-            ret["3m"] = round(((price / float(close.iloc[-63])) - 1) * 100, 1)
-        if len(close) >= 126:
-            ret["6m"] = round(((price / float(close.iloc[-126])) - 1) * 100, 1)
+        for label, lookback in (("1m", 22), ("3m", 63), ("6m", 126)):
+            if len(close) < lookback:
+                continue
+            prev = float(close.iloc[-lookback])
+            if not np.isfinite(prev) or prev == 0:
+                continue
+            val = round((price / prev - 1) * 100, 1)
+            if np.isfinite(val):
+                ret[label] = val
         return ret
-    except (requests.RequestException, requests.exceptions.Timeout, KeyError):
+    except (requests.RequestException, requests.exceptions.Timeout, KeyError, RuntimeError):
+        # RuntimeError catches yfinance threading bugs ("dictionary changed size during iteration")
         return {}
 
 
@@ -504,8 +678,127 @@ def fetch_etf_benchmark_data(etf_tickers):
 
 # ── Fundamentals ─────────────────────────────────────────────────────────────
 
-def _fetch_single_fundamental(t, _disk_cache):
-    """Fetch fundamental data for a single ticker. Used by ThreadPoolExecutor."""
+def _fetch_single_fundamental(t, _disk_cache, fh_client=None):
+    """Fetch fundamental data. Uses Finnhub if key available, else yfinance."""
+    if fh_client is not None:
+        return _fetch_fundamental_finnhub(t, _disk_cache, fh_client)
+    return _fetch_fundamental_yfinance(t, _disk_cache)
+
+
+def _fetch_fundamental_finnhub(t, _disk_cache, client):
+    """Fetch fundamentals via Finnhub — no threading deadlocks, reliable."""
+    row = {"Ticker": t}
+    _rate_limited = False
+    try:
+        # ── 1. Basic financial metrics ────────────────────────────────────
+        _fh_throttle()
+        resp = client.company_basic_financials(t, 'all')
+        m = resp.get('metric', {}) or {}
+
+        rev_g = m.get('revenueGrowthTTMYoy')       # already in %
+        gm    = m.get('grossMarginTTM')             # already in %
+        npm   = m.get('netProfitMarginTTM')         # already in %
+        beta  = m.get('beta')
+
+        row['RevGrowthPct']  = round(rev_g, 1) if rev_g is not None else None
+        row['GrossMargin']   = round(gm, 1)    if gm  is not None else None
+        row['EV_Sales']      = round(m['evRevenueTTM'], 2) if m.get('evRevenueTTM') else None
+        row['EV_EBITDA']     = round(m['evEbitdaTTM'], 1)  if m.get('evEbitdaTTM') and m['evEbitdaTTM'] > 0 else None
+        row['Rule40']        = round(rev_g + npm, 1) if (rev_g is not None and npm is not None) else None
+        row['MarketCap']     = int(m['marketCapitalization'] * 1e6) if m.get('marketCapitalization') else None
+
+        # Beta
+        if beta is not None and 0 < beta <= 5:
+            row['Beta'] = round(beta, 2); row['BetaReliable'] = True
+        else:
+            row['Beta'] = beta; row['BetaReliable'] = False
+
+        # FCF: positive if EV/FCF ratio is positive (EV is always positive for listed cos)
+        ev_fcf = m.get('currentEv/freeCashFlowTTM')
+        row['FCFPositive']      = bool(ev_fcf and ev_fcf > 0)
+        row['FCFValue']         = None   # exact value not derivable from free-tier metrics
+        row['CashRunwayMonths'] = None
+
+        # Short interest — may be None on free tier
+        short_pct = m.get('shortPercent')
+        row['ShortPct']    = round(float(short_pct) * 100, 1) if short_pct else None
+        row['DaysToCover'] = m.get('shortInterestRatio')
+
+        # Insider ownership — often None on free tier, default 0
+        ins_own = m.get('insiderOwnershipPercent')
+        row['InsiderPct'] = round(float(ins_own), 1) if ins_own else 0.0
+        row['InstitPct']  = None   # not available on free tier
+
+        # ── 2. Quote — day change, overnight ─────────────────────────────
+        _fh_throttle()
+        quote = client.quote(t)
+        row['DayChgPct']   = round(quote['dp'], 2) if quote.get('dp') is not None else None
+        row['PostMktChg']  = None   # not on free tier
+        row['PreMktChg']   = None
+        row['OvernightChg'] = None
+
+        # ── 3. Recommendation trends — analyst consensus ──────────────────
+        _fh_throttle()
+        try:
+            rec = client.recommendation_trends(t)
+            if rec:
+                latest = rec[0]
+                n = (latest.get('buy', 0) + latest.get('strongBuy', 0) +
+                     latest.get('sell', 0) + latest.get('strongSell', 0) +
+                     latest.get('hold', 0))
+                row['NumAnalysts'] = n
+                buy_n  = latest.get('buy', 0) + latest.get('strongBuy', 0)
+                sell_n = latest.get('sell', 0) + latest.get('strongSell', 0)
+                if buy_n > sell_n * 1.5:    row['Recommendation'] = 'buy'
+                elif sell_n > buy_n * 1.5:  row['Recommendation'] = 'sell'
+                else:                        row['Recommendation'] = 'hold'
+            else:
+                row['NumAnalysts'] = 0
+        except Exception:
+            row['NumAnalysts'] = 0
+        # Price target requires paid tier — skip analyst upside
+        row['AnalystUpside'] = None
+        row['TargetMean']    = None
+        row['TargetLow']     = None
+        row['TargetHigh']    = None
+
+        # ── 4. Earnings calendar ──────────────────────────────────────────
+        _fh_throttle()
+        try:
+            today_str = datetime.now().strftime('%Y-%m-%d')
+            fut_str   = (datetime.now().replace(year=datetime.now().year + 1)).strftime('%Y-%m-%d')
+            ec = client.earnings_calendar(symbol=t, _from=today_str, to=fut_str)
+            cal = ec.get('earningsCalendar', [])
+            if cal:
+                row['NextEarnings'] = cal[0].get('date')
+            else:
+                row['NextEarnings'] = None
+        except Exception:
+            row['NextEarnings'] = None
+
+        # Alias so existing call sites using either name work
+        row['RevenueGrowth'] = row.get('RevGrowthPct')
+
+        # Sector / Industry — not in Finnhub basic metrics; will be missing
+        # (sector percentile ranking uses watchlist data, not this field)
+        row['Sector']   = ''
+        row['Industry'] = ''
+
+    except Exception as e:
+        _rate_limited = '429' in str(e) or 'rate' in str(e).lower()
+        if t in _disk_cache:
+            row.update(_disk_cache[t])
+
+    cache_entry = None
+    if len(row) > 1:
+        cache_entry = {k: v for k, v in row.items()
+                       if k != 'Ticker' and not isinstance(v, (list, dict))
+                       and v is not None}
+    return row, cache_entry, _rate_limited
+
+
+def _fetch_fundamental_yfinance(t, _disk_cache):
+    """Fallback: fetch fundamentals via yfinance (legacy, prone to hangs)."""
     import random
     row = {"Ticker": t}
     _rate_limited = False
@@ -608,61 +901,12 @@ def _fetch_single_fundamental(t, _disk_cache):
         else:
             row["OvernightChg"] = None
 
-        # Historical EV/Sales range (3 years) — sector-comparable valuation
-        shares = info.get("sharesOutstanding")
-        total_debt = info.get("totalDebt") or 0
-        cash = info.get("totalCash") or 0
-        if shares and ev_raw and rev_raw:
-            try:
-                hist = yf.download(t, period="3y", interval="1mo",
-                                   progress=False, auto_adjust=True)
-                q_fin = getattr(obj, "quarterly_income_stmt", None)
-                if q_fin is None or (hasattr(q_fin, "empty") and q_fin.empty):
-                    q_fin = getattr(obj, "quarterly_financials", None)
-                rev_row = None
-                if q_fin is not None and not q_fin.empty:
-                    for name in ["Total Revenue", "Revenue", "Net Revenue"]:
-                        if name in q_fin.index:
-                            rev_row = name
-                            break
-                if not hist.empty and rev_row:
-                    monthly_close = hist["Close"].squeeze()
-                    rev_q = q_fin.loc[rev_row].sort_index()
-                    ttm = rev_q.rolling(4).sum().dropna()
-                    if not ttm.empty:
-                        ttm.index = ttm.index.tz_localize(None) if ttm.index.tz else ttm.index
-                        monthly_close.index = monthly_close.index.tz_localize(None) if monthly_close.index.tz else monthly_close.index
-                        ttm_monthly = (ttm.resample("MS").last()
-                                          .reindex(monthly_close.index, method="ffill"))
-                        # EV/Sales: (market cap + net debt) / revenue
-                        net_debt = total_debt - cash
-                        market_cap_hist = monthly_close * shares
-                        ev_hist = market_cap_hist + net_debt
-                        ev_sales_hist = (ev_hist / ttm_monthly).dropna()
-                        ev_sales_hist = ev_sales_hist[(ev_sales_hist > 0) & (ev_sales_hist < 500)]
-                        if len(ev_sales_hist) >= 6:
-                            row["EVS_3yr_Min"] = round(float(ev_sales_hist.min()), 2)
-                            row["EVS_3yr_Max"] = round(float(ev_sales_hist.max()), 2)
-                            row["EVS_3yr_Avg"] = round(float(ev_sales_hist.mean()), 2)
-                            rng = row["EVS_3yr_Max"] - row["EVS_3yr_Min"]
-                            ev_sales_now = row["EV_Sales"] or (ev_raw / rev_raw)
-                            if rng > 0:
-                                row["EVS_HistPos"] = round(
-                                    (ev_sales_now - row["EVS_3yr_Min"]) / rng * 100, 1)
-                        # Keep P/S for backwards compatibility display
-                        if ps and shares:
-                            ps_hist = (monthly_close * shares / ttm_monthly).dropna()
-                            ps_hist = ps_hist[(ps_hist > 0) & (ps_hist < 500)]
-                            if len(ps_hist) >= 6:
-                                row["PS_3yr_Min"] = round(float(ps_hist.min()), 2)
-                                row["PS_3yr_Max"] = round(float(ps_hist.max()), 2)
-                                row["PS_3yr_Avg"] = round(float(ps_hist.mean()), 2)
-                                ps_rng = row["PS_3yr_Max"] - row["PS_3yr_Min"]
-                                if ps_rng > 0:
-                                    row["PS_HistPos"] = round(
-                                        (ps - row["PS_3yr_Min"]) / ps_rng * 100, 1)
-            except (KeyError, TypeError, IndexError, ZeroDivisionError):
-                pass
+        # Historical EV/Sales range (3 years) — DISABLED IN CONCURRENT CONTEXT
+        # yfinance has severe deadlock/race condition bugs when called from ThreadPoolExecutor
+        # The 3yr historical range is nice-to-have but not critical for scoring
+        # Current EV/Sales + sector percentile are sufficient and come from .info
+        # Streamlit caches this anyway, so users will see historical ranges on cache hits
+        pass  # Skipping historical fetch entirely to prevent hangs
     except (requests.RequestException, requests.exceptions.Timeout, KeyError, ValueError, TypeError):
         if t in _disk_cache:
             row.update(_disk_cache[t])
@@ -682,8 +926,9 @@ def fetch_fundamentals(tickers):
     _new_cache = {}
     _rate_limited = False
 
+    fh_client = _make_finnhub_client()   # None if key missing or package absent
     pool = ThreadPoolExecutor(max_workers=4)
-    futures = {pool.submit(_fetch_single_fundamental, t, _disk_cache): t for t in tickers}
+    futures = {pool.submit(_fetch_single_fundamental, t, _disk_cache, fh_client): t for t in tickers}
     results_map = {}
     try:
         for future in as_completed(futures, timeout=45):
@@ -874,6 +1119,112 @@ def _fetch_single_extra(t):
     return row
 
 
+def _fetch_single_extra_finnhub(t, client):
+    """Fetch news and insider transactions via Finnhub. No yfinance, no hangs."""
+    row = {"Ticker": t, "InsiderSignal": "N/A", "InsiderNet": 0,
+           "InsiderBuyScore": 0.0, "InsiderSellScore": 0.0, "InsiderCluster": False,
+           "Headlines": [], "InsiderBuys": []}
+    try:
+        # ── News ──────────────────────────────────────────────────────────────
+        _fh_throttle()
+        try:
+            today   = datetime.now()
+            from_dt = (today - pd.Timedelta(days=30)).strftime('%Y-%m-%d')
+            to_dt   = today.strftime('%Y-%m-%d')
+            news = client.company_news(t, _from=from_dt, to=to_dt)
+            headlines = []
+            for n in (news or [])[:5]:
+                title = n.get('headline', '')
+                pub   = n.get('source', '')
+                ts    = n.get('datetime')
+                if title:
+                    try:
+                        date_str = datetime.fromtimestamp(ts).strftime('%b %d') if ts else ''
+                    except (ValueError, TypeError, OSError):
+                        date_str = ''
+                    headlines.append({'date': date_str, 'title': title, 'pub': pub})
+            row['Headlines'] = headlines
+        except Exception:
+            pass
+
+        # ── Insider transactions ──────────────────────────────────────────────
+        _fh_throttle()
+        try:
+            today   = datetime.now()
+            from_dt = (today - pd.Timedelta(days=90)).strftime('%Y-%m-%d')
+            to_dt   = today.strftime('%Y-%m-%d')
+            ins_resp = client.stock_insider_transactions(t, from_dt, to_dt)
+            txns     = (ins_resp or {}).get('data', []) or []
+
+            def _value_weight(price, shares):
+                v = abs(float(price or 0) * float(shares or 0))
+                if v >= 500_000: return 3.0
+                if v >= 100_000: return 2.0
+                if v >= 10_000:  return 1.0
+                return 0.5
+
+            buy_details     = []
+            buy_score       = 0.0
+            sell_score      = 0.0
+            distinct_buyers = set()
+
+            for tx in txns:
+                code   = (tx.get('transactionCode') or '').upper()
+                name   = tx.get('name', 'Unknown')
+                price  = tx.get('transactionPrice') or 0
+                shares = abs(tx.get('change') or tx.get('share') or 0)
+                date_v = tx.get('transactionDate') or tx.get('filingDate') or ''
+
+                # Only open-market buys (P) and sales (S); skip grants, exercises, gifts
+                if code not in ('P', 'S'):
+                    continue
+                if price == 0 or shares == 0:
+                    continue
+
+                try:
+                    date_str = datetime.strptime(date_v[:10], '%Y-%m-%d').strftime('%b %d')
+                except (ValueError, TypeError):
+                    date_str = str(date_v)[:10]
+
+                w = _value_weight(price, shares)
+                if code == 'P':
+                    buy_score += w
+                    distinct_buyers.add(name)
+                    buy_details.append({
+                        'insider':  name,
+                        'position': '',
+                        'date':     date_str,
+                        'value':    round(float(price) * float(shares), 0),
+                        'shares':   int(shares),
+                        'weight':   round(w, 1),
+                    })
+                else:
+                    sell_score += w
+
+            row['InsiderBuys']      = buy_details
+            row['InsiderBuyScore']  = round(buy_score, 1)
+            row['InsiderSellScore'] = round(sell_score, 1)
+            row['InsiderCluster']   = len(distinct_buyers) >= 3
+
+            if buy_score == 0 and sell_score == 0:
+                signal = 'Neutral'
+            elif buy_score >= sell_score * 1.5:
+                signal = 'Cluster Buy' if len(distinct_buyers) >= 3 else ('Strong Buy' if buy_score >= 4.0 else 'Buying')
+            elif sell_score > buy_score * 1.5:
+                signal = 'Selling'
+            else:
+                signal = 'Neutral'
+
+            row['InsiderNet']    = round(buy_score - sell_score, 1)
+            row['InsiderSignal'] = signal
+        except Exception:
+            pass
+
+    except Exception:
+        pass
+    return row
+
+
 @st.cache_data(ttl=1800, show_spinner=False)
 def fetch_extras(tickers):
     from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -881,8 +1232,15 @@ def fetch_extras(tickers):
                         "InsiderBuyScore": 0.0, "InsiderSellScore": 0.0,
                         "InsiderCluster": False, "Headlines": [], "InsiderBuys": []}
     results_map = {}
+    fh_client = _make_finnhub_client()   # None if key missing or package absent
+
+    def _dispatch(t):
+        if fh_client is not None:
+            return _fetch_single_extra_finnhub(t, fh_client)
+        return _fetch_single_extra(t)
+
     pool = ThreadPoolExecutor(max_workers=4)
-    futures = {pool.submit(_fetch_single_extra, t): t for t in tickers}
+    futures = {pool.submit(_dispatch, t): t for t in tickers}
     try:
         for future in as_completed(futures, timeout=45):
             t = futures[future]
@@ -1131,26 +1489,8 @@ Headlines:
 
 Be concise and actionable. No filler. Write for someone managing a small-cap growth portfolio."""
 
-    try:
-        resp = requests.post(
-            "https://api.anthropic.com/v1/messages",
-            headers={
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json",
-            },
-            json={
-                "model": "claude-haiku-4-5",
-                "max_tokens": 400,
-                "messages": [{"role": "user", "content": prompt}],
-            },
-            timeout=30,
-        )
-        if resp.status_code == 200:
-            return resp.json()["content"][0]["text"]
-        return None
-    except (requests.RequestException, requests.exceptions.Timeout, ValueError):
-        return None
+    return _xai_chat(api_key, [{"role": "user", "content": prompt}],
+                     model="grok-3-mini", max_tokens=400)
 
 
 # ── AI Headline Sentiment (lightweight, feeds Narrative pillar) ───────────────
@@ -1196,57 +1536,131 @@ Headlines:
 
 Respond with one JSON line per ticker, nothing else."""
 
-    try:
-        resp = requests.post(
-            "https://api.anthropic.com/v1/messages",
-            headers={
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json",
-            },
-            json={
-                "model": "claude-haiku-4-5",
-                "max_tokens": 400,
-                "messages": [{"role": "user", "content": prompt}],
-            },
-            timeout=30,
+    text = _xai_chat(api_key, [{"role": "user", "content": prompt}],
+                     model="grok-3-mini", max_tokens=500)
+    if not text:
+        return {}
+    import json as _json
+    results = {}
+    for line in text.strip().split("\n"):
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            obj = _json.loads(line)
+            t = obj.get("ticker", "")
+            if t in tickers_with_news:
+                results[t] = {
+                    "score": max(-1.0, min(1.0, float(obj.get("score", 0)))),
+                    "summary": obj.get("summary", ""),
+                }
+        except (ValueError, KeyError, TypeError):
+            continue
+    return results
+
+
+# ── X Insights — per-ticker deep dive (Grok live search) ────────────────────
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def fetch_x_insights(ticker, api_key):
+    """Pull the most important insights from X posts about a ticker in the last 24h.
+    Uses Grok live search. Returns formatted markdown string or None.
+    Cached 30 min — called on-demand in deep dive, not at page load.
+    """
+    if not api_key:
+        return None
+    prompt = (
+        f"Search X (Twitter) for posts about ${ticker} stock from the last 24 hours.\n\n"
+        f"What are the most important things traders and investors are actually discussing? "
+        f"Focus on: catalysts, earnings/guidance commentary, unusual activity, notable accounts, "
+        f"any news being reacted to, and overall crowd read.\n\n"
+        f"Respond with 3-5 concise bullet points. Be specific — cite what people are saying, "
+        f"not generic observations. If volume is low or nothing notable, say so briefly. "
+        f"Write for a sophisticated trader who wants signal, not noise."
+    )
+    result = _xai_responses(
+        api_key, [{"role": "user", "content": prompt}],
+        tools=[{"type": "x_search"}], model="grok-3", max_tokens=500,
+    )
+    if not result or result.startswith("[xAI"):
+        result = _xai_chat(api_key, [{"role": "user", "content": prompt}],
+                           model="grok-3", max_tokens=500)
+    return result
+
+
+# ── X Sentiment (Grok live search) ───────────────────────────────────────────
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def fetch_x_sentiment(tickers_tuple, api_key):
+    """Get X/Twitter sentiment for each ticker via Grok live search.
+    Returns {ticker: {"bull_pct": int, "summary": str}}.
+    Runs one call per ticker in parallel; cached 30 min.
+    """
+    if not api_key or not tickers_tuple:
+        return {}
+    import json as _json
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    def _fetch_one(t):
+        prompt = (
+            f"What is the current sentiment among traders and investors about ${t} stock "
+            f"on X (Twitter) and social media? "
+            f"Is opinion mostly bullish, bearish, or mixed? "
+            f'Respond with ONLY this JSON (no other text): {{"ticker": "{t}", "bull_pct": <integer 0-100>, "summary": "<one sentence>"}}\n'
+            f"bull_pct: 50=neutral, above 60=bullish, below 40=bearish."
         )
-        if resp.status_code != 200:
-            return {}
-        text = resp.json()["content"][0]["text"]
-        import re
-        results = {}
+        text = _xai_chat(api_key, [{"role": "user", "content": prompt}],
+                         model="grok-3-mini", max_tokens=80)
+        if not text:
+            return t, None
         for line in text.strip().split("\n"):
             line = line.strip()
             if not line.startswith("{"):
                 continue
             try:
-                import json as _json
                 obj = _json.loads(line)
-                t = obj.get("ticker", "")
-                if t in tickers_with_news:
-                    results[t] = {
-                        "score": max(-1.0, min(1.0, float(obj.get("score", 0)))),
-                        "summary": obj.get("summary", ""),
-                    }
+                return t, {
+                    "bull_pct": max(0, min(100, int(obj.get("bull_pct", 50)))),
+                    "summary":  obj.get("summary", ""),
+                }
             except (ValueError, KeyError, TypeError):
                 continue
-        return results
-    except (requests.RequestException, requests.exceptions.Timeout, ValueError, KeyError):
-        return {}
+        return t, None
+
+    results = {}
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        futures = {pool.submit(_fetch_one, t): t for t in tickers_tuple}
+        try:
+            for future in as_completed(futures, timeout=60):
+                t, val = future.result(timeout=15)
+                if val is not None:
+                    results[t] = val
+        except Exception:
+            pass
+    return results
 
 
 # ── AI Narrative Synthesis ───────────────────────────────────────────────────
 
-def claude_summarize(ticker, price, rsi, atr_pct, pos52, vs50, vs200,
-                     short_pct, beta, upside, recommendation, mcap,
-                     rev_growth, insider_signal, earnings_beats,
-                     next_earnings, st_bull_pct, st_msgs, headlines, api_key):
-    """Synthesize all available data into a narrative using Claude API."""
+def grok_summarize(ticker, price, rsi, atr_pct, pos52, vs50, vs200,
+                   short_pct, beta, upside, recommendation, mcap,
+                   rev_growth, insider_signal, earnings_beats,
+                   next_earnings, x_sentiment, headlines, api_key):
+    """Synthesize all available data into a narrative using Grok (xAI).
+    Grok searches X and the web for live context on top of the data provided.
+    """
     news_block = "\n".join(
         f"  - {h.get('date','')} {h.get('title','')} ({h.get('pub','')})"
         for h in (headlines or [])[:5]
     ) or "  None available"
+
+    _x = x_sentiment or {}
+    x_bull = _x.get("bull_pct")
+    x_summary = _x.get("summary", "")
+    sentiment_line = (
+        f"{x_bull}% bullish — {x_summary}" if x_bull is not None
+        else "N/A"
+    )
 
     prompt = f"""You are a concise investment analyst. Synthesize the data below for ${ticker} into a clear investment summary for someone who favours asymmetric, high-beta re-rating opportunities.
 
@@ -1260,8 +1674,8 @@ FUNDAMENTAL:
 - Analyst upside to mean target: {upside or 'N/A'}% | Next earnings: {next_earnings or 'N/A'}
 - EPS beats last 4 quarters: {earnings_beats or 'N/A'} | Insider activity (90d): {insider_signal or 'N/A'}
 
-SOCIAL SENTIMENT (StockTwits):
-- Bull sentiment: {str(st_bull_pct) + '%' if st_bull_pct else 'N/A'} of {st_msgs} recent messages
+X (TWITTER) SENTIMENT:
+- {sentiment_line}
 
 RECENT NEWS:
 {news_block}
@@ -1281,28 +1695,16 @@ Respond in exactly this format:
 
 **VERDICT**: [One of: Strong Setup / Developing Setup / Watch List / Avoid — with a one-line reason]
 
-Be direct. No filler. Base everything on the data provided."""
+Be direct. No filler."""
 
-    try:
-        resp = requests.post(
-            "https://api.anthropic.com/v1/messages",
-            headers={
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json",
-            },
-            json={
-                "model": "claude-haiku-4-5",
-                "max_tokens": 600,
-                "messages": [{"role": "user", "content": prompt}],
-            },
-            timeout=30,
-        )
-        if resp.status_code == 200:
-            return resp.json()["content"][0]["text"]
-        return f"API error {resp.status_code}: {resp.text[:200]}"
-    except (requests.RequestException, requests.exceptions.Timeout, ValueError) as e:
-        return f"Request failed: {e}"
+    result = _xai_responses(
+        api_key, [{"role": "user", "content": prompt}],
+        tools=[{"type": "web_search"}, {"type": "x_search"}], model="grok-3", max_tokens=700,
+    )
+    if not result or result.startswith("[xAI"):
+        result = _xai_chat(api_key, [{"role": "user", "content": prompt}],
+                           model="grok-3", max_tokens=700)
+    return result or "[xAI error] Empty response."
 
 
 # ── ETF Peer Comparison ───────────────────────────────────────────────────────

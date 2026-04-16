@@ -13,6 +13,7 @@ from scoring import (
     _safe, calc_rsi, calc_atr_pct, calc_setup_stage,
     calc_four_pillars, calc_convexity_score,
     calc_market_env_score, calc_execution_window,
+    THRESHOLDS,
 )
 from data import (
     fetch_price_data, fetch_spy_daily, fetch_spy_returns,
@@ -20,13 +21,13 @@ from data import (
     fetch_etf_benchmark_data, fetch_fundamentals, fetch_extras,
     fetch_stocktwits, score_scanner_candidates,
     scan_yahoo_screener, scan_yahoo_predefined, scan_finviz, scan_yahoo_trending,
-    claude_summarize, score_headlines_ai,
+    grok_summarize, score_headlines_ai, fetch_x_sentiment, fetch_x_insights,
     fetch_market_headlines, ai_market_summary,
     fetch_peer_comparison,
 )
 from themes import (
     load_themes, save_themes, get_ticker_themes, get_theme_tickers,
-    get_theme_etfs, get_all_etf_tickers, _get_anthropic_key, _get_fmp_key,
+    get_theme_etfs, get_all_etf_tickers, _get_anthropic_key, _get_xai_key, _get_fmp_key,
     DEFAULT_THEMES,
 )
 
@@ -355,7 +356,7 @@ with st.status("◣ Loading Convexity Terminal...", expanded=True) as _status:
     # Phase 1: Price data first (needed for filtering), plus independent fetches in parallel
     st.write("Fetching price data + market environment...")
     _all_etf_tickers = get_all_etf_tickers(st.session_state.themes)
-    _anthropic_key = _get_anthropic_key()
+    _xai_key = _get_xai_key()
     _tickers_tuple = tuple(st.session_state.tickers)
     _etf_tuple = tuple(_all_etf_tickers)
 
@@ -369,6 +370,7 @@ with st.status("◣ Loading Convexity Terminal...", expanded=True) as _status:
         _f_etf = _pool.submit(fetch_etf_benchmark_data, _etf_tuple) if _all_etf_tickers else None
         _f_extras = _pool.submit(fetch_extras, _tickers_tuple)
         _f_st = _pool.submit(fetch_stocktwits, _tickers_tuple)
+        _f_x_sent = _pool.submit(fetch_x_sentiment, _tickers_tuple, _xai_key) if _xai_key else None
 
         # Collect results as they complete
         df_price = _f_price.result()
@@ -399,13 +401,14 @@ with st.status("◣ Loading Convexity Terminal...", expanded=True) as _status:
         df_etf = _f_etf.result() if _f_etf else pd.DataFrame()
         df_extras = _f_extras.result()
         st_data = _f_st.result()
+        x_sentiment_data = _f_x_sent.result() if _f_x_sent else {}
 
     st.write("Calculating scores...")
     env_total, env_pillars, env_decision, env_decision_sub, env_warnings, env_tailwinds = calc_market_env_score(market_env)
 
     _market_ai_summary = ai_market_summary(tuple(
         (h["title"], h["source"]) for h in _market_headlines
-    ), _anthropic_key) if _anthropic_key and _market_headlines else None
+    ), _xai_key) if _xai_key and _market_headlines else None
 
     df_rs = calc_downday_rs(_tickers_tuple, spy_close, spy_daily_ret)
 
@@ -413,12 +416,12 @@ with st.status("◣ Loading Convexity Terminal...", expanded=True) as _status:
 
     # AI headline sentiment (uses headlines already fetched in df_extras)
     _ai_sentiment = {}
-    if _anthropic_key and not df_extras.empty:
+    if _xai_key and not df_extras.empty:
         df_headlines = df_extras[df_extras["Ticker"].notna() & df_extras["Headlines"].notna()]
         _headlines_map = dict(zip(df_headlines["Ticker"], df_headlines["Headlines"]))
         if _headlines_map:
             _ai_sentiment = score_headlines_ai(
-                tuple(sorted(_headlines_map.items())), _anthropic_key
+                tuple(sorted(_headlines_map.items())), _xai_key
             )
 
     _status.update(label="◣ Terminal Ready", state="complete", expanded=False)
@@ -450,7 +453,10 @@ df_all = df_all.merge(
     df_extras[["Ticker", "InsiderSignal", "InsiderNet", "InsiderBuys"]],
     on="Ticker", how="left"
 )
-df_all["ST_BullPct"] = df_all["Ticker"].map(lambda t: st_data.get(t, {}).get("bull_pct"))
+# X sentiment is primary; StockTwits is fallback
+df_all["ST_BullPct"] = df_all["Ticker"].map(
+    lambda t: (x_sentiment_data.get(t) or {}).get("bull_pct") or st_data.get(t, {}).get("bull_pct")
+)
 df_all["ST_MsgCount"] = df_all["Ticker"].map(lambda t: st_data.get(t, {}).get("msg_count", 0))
 
 # AI headline sentiment
@@ -518,7 +524,7 @@ else:
 # ── Four Pillars (the single scoring spine) ──
 df_all["SetupStage"] = df_all.apply(calc_setup_stage, axis=1)
 _pillar_results = df_all.apply(
-    lambda r: calc_four_pillars(r, st.session_state.themes, spy_ret, df_etf, st_data, _ai_sentiment), axis=1
+    lambda r: calc_four_pillars(r, st.session_state.themes, spy_ret, df_etf, st_data, _ai_sentiment, x_sentiment_data), axis=1
 )
 df_all["PillarTech"]    = _pillar_results.apply(lambda d: d["technical"])
 df_all["PillarFund"]    = _pillar_results.apply(lambda d: d["fundamental"])
@@ -542,6 +548,9 @@ _expected_cols = {
     "Price": None, "Chg": None, "Pos52": None, "Ret1m": None, "Ret3m": None,
     "Spark30": None, "RSI": None, "ATR_pct": None, "Beta": None,
     "vsMA50": None, "vsMA200": None,
+    # Coiled Base — basing + tightening + compressing + MA stack
+    "BaseTightPct": None, "ATRContract": None, "BBWidthPct": None,
+    "MAStack": False, "CoiledScore": None,
     # Fundamental data
     "NumAnalysts": 0, "Consensus": None, "Upside": None, "AnalystUpside": None,
     "ShortPct": None, "FCF_yield": None, "ROE": None, "Revenue_Growth": None,
@@ -727,7 +736,7 @@ if deep_dive_ticker != "--" and deep_dive_ticker in df_all["Ticker"].values:
     if not _beta_reliable:
         _beta_label = f"⚠️ {_beta_label}"
     dd7.metric("Beta", _beta_label, help="⚠️ Beta may be unreliable (missing, negative, or >5). Fallback of 1.5 used in scoring." if not _beta_reliable else None)
-    dd8.metric("P/S", f"{_safe(t_row.get('PS_Current')):.1f}x" if _safe(t_row.get('PS_Current')) else "N/A")
+    dd8.metric("EV/Sales", f"{_safe(t_row.get('EV_Sales')):.1f}x" if _safe(t_row.get('EV_Sales')) else "N/A")
     dd9.metric("Analyst Upside", f"{_safe(t_row.get('AnalystUpside')):+.0f}%" if _safe(t_row.get('AnalystUpside')) else "N/A")
     dd10.metric("Rev Growth", f"{_safe(t_row.get('RevGrowthPct')):+.0f}%" if _safe(t_row.get('RevGrowthPct')) else "N/A")
 
@@ -840,6 +849,17 @@ if deep_dive_ticker != "--" and deep_dive_ticker in df_all["Ticker"].values:
                 margin=dict(l=50, r=20, t=30, b=30), **DARK,
             )
             st.plotly_chart(fig_sh, width="stretch")
+
+    # ── X Insights (last 24h) ──────────────────────────────────────────────────
+    if _xai_key:
+        with st.expander("X Insights — last 24h", expanded=True):
+            _x_insights = fetch_x_insights(deep_dive_ticker, _xai_key)
+            if _x_insights and not _x_insights.startswith("[xAI"):
+                st.markdown(_x_insights)
+            elif _x_insights and _x_insights.startswith("[xAI"):
+                st.caption(f"Live search unavailable ({_x_insights})")
+            else:
+                st.caption("No insights returned.")
 
     grad_divider()
 
@@ -1234,7 +1254,7 @@ with tab_dash:
     overview_cols = ["Ticker", "Price", "DayChgPct", "OvernightChg", "Spark30", "Ret1m",
                      "SetupStage", "RS_Label",
                      "FourPillar", "ConvexityScore", "MomentumScore", "RSI", "Pos52",
-                     "ST_BullPct", "AnalystUpside", "RevGrowthPct", "InsiderPct", "PS_Current", "ShortPct", "Theme"]
+                     "ST_BullPct", "AnalystUpside", "RevGrowthPct", "InsiderPct", "EV_Sales", "ShortPct", "Theme"]
     # Ensure required columns exist
     for _oc in ["RS_Label", "Spark30", "OvernightChg", "DayChgPct", "ST_BullPct", "Ret1m"]:
         if _oc not in overview_df.columns:
@@ -1246,7 +1266,7 @@ with tab_dash:
         "FourPillar": "4-Pillar", "ConvexityScore": "Convexity", "MomentumScore": "Momentum",
         "Pos52": "52wk Pos", "ST_BullPct": "Sentiment",
         "AnalystUpside": "Upside %",
-        "RevGrowthPct": "Rev Growth %", "InsiderPct": "Insider %", "PS_Current": "P/S", "ShortPct": "Short %",
+        "RevGrowthPct": "Rev Growth %", "InsiderPct": "Insider %", "EV_Sales": "EV/Sales", "ShortPct": "Short %",
     })
     overview_disp = overview_disp.sort_values("Convexity", ascending=False).reset_index(drop=True)
 
@@ -1293,7 +1313,7 @@ with tab_dash:
             "Upside %": lambda x: f"{x:+.0f}%" if pd.notna(x) else "",
             "Rev Growth %": lambda x: f"{x:+.0f}%" if pd.notna(x) else "",
             "Insider %": lambda x: f"{x:.1f}%" if pd.notna(x) else "",
-            "P/S": lambda x: f"{x:.1f}" if pd.notna(x) else "",
+            "EV/Sales": lambda x: f"{x:.1f}x" if pd.notna(x) else "",
             "Short %": lambda x: f"{x:.1f}%" if pd.notna(x) else "",
         }, na_rep="")
     )
@@ -1412,9 +1432,16 @@ with tab_conv:
     top5 = df_all.sort_values("ConvexityScore", ascending=False).head(5)
     for rank_i, (_, row) in enumerate(top5.iterrows(), 1):
         reasons = []
-        ps_pos = _safe(row.get("PS_HistPos"))
-        if ps_pos > 0 and ps_pos <= 30:
-            reasons.append(f"compressed P/S ({ps_pos:.0f}% of 3yr range)")
+        # Prefer EV/Sales historical position; fall back silently to P/S if missing
+        evs_pos = _safe(row.get("EVS_HistPos"))
+        _hist_label = "EV/Sales"
+        _hist_val = evs_pos
+        if not (evs_pos > 0):
+            ps_pos = _safe(row.get("PS_HistPos"))
+            if ps_pos > 0:
+                _hist_val = ps_pos
+        if _hist_val > 0 and _hist_val <= 30:
+            reasons.append(f"compressed {_hist_label} ({_hist_val:.0f}% of 3yr range)")
         upside = _safe(row.get("AnalystUpside"))
         if upside > 20:
             reasons.append(f"+{upside:.0f}% analyst upside")
@@ -1448,9 +1475,10 @@ with tab_conv:
 
     df_conv = df_all
 
-    # Header metrics
+    # Header metrics — use EV/Sales historical position (PS fallback is silent)
+    _hist_col = "EVS_HistPos" if ("EVS_HistPos" in df_conv.columns and df_conv["EVS_HistPos"].notna().any()) else "PS_HistPos"
     fcf_pos   = df_conv[df_conv["FCFPositive"] == True]["Ticker"].tolist()
-    ps_lows   = df_conv[df_conv["PS_HistPos"].notna() & (df_conv["PS_HistPos"] <= 25)]["Ticker"].tolist()
+    evs_lows  = df_conv[df_conv[_hist_col].notna() & (df_conv[_hist_col] <= 25)]["Ticker"].tolist() if _hist_col in df_conv.columns else []
     rule40_ok = df_conv[df_conv["Rule40"].notna() & (df_conv["Rule40"] >= 40)]["Ticker"].tolist()
     near_flip = df_conv[
         (df_conv["FCFPositive"] == False) &
@@ -1458,22 +1486,22 @@ with tab_conv:
         (df_conv["RevGrowthPct"].notna()) & (df_conv["RevGrowthPct"] > 20)
     ]["Ticker"].tolist()
 
-    # "Priced for perfection" flag — P/S in top quartile of 3yr range AND RSI >= 65
+    # "Priced for perfection" flag — EV/Sales in top quartile of 3yr range AND RSI >= 65
     perfection = df_conv[
-        df_conv["PS_HistPos"].notna() &
-        (df_conv["PS_HistPos"] >= 75) &
+        df_conv[_hist_col].notna() &
+        (df_conv[_hist_col] >= 75) &
         (df_conv["RSI"] >= 65)
-    ]["Ticker"].tolist()
+    ]["Ticker"].tolist() if _hist_col in df_conv.columns else []
 
     h1, h2, h3, h4, h5 = st.columns(5)
     h1.metric("FCF Positive",         len(fcf_pos),   ", ".join(fcf_pos)   or "None")
-    h2.metric("P/S at 3yr Low (<25%)", len(ps_lows),   ", ".join(ps_lows)   or "None")
+    h2.metric("EV/Sales at 3yr Low (<25%)", len(evs_lows),   ", ".join(evs_lows)   or "None")
     h3.metric("Rule of 40 (>=40)",    len(rule40_ok), ", ".join(rule40_ok) or "None")
     h4.metric("Near EBITDA Flip",     len(near_flip), ", ".join(near_flip) or "None",
               help="FCF negative but growing >20% revenue with >6 months runway")
     h5.metric("Priced for Perfection", len(perfection), ", ".join(perfection) or "None",
               delta_color="inverse",
-              help="P/S in top 25% of 3yr range AND RSI >= 65 — dangerous setup, negative asymmetry")
+              help="EV/Sales in top 25% of 3yr range AND RSI >= 65 — dangerous setup, negative asymmetry")
 
     grad_divider()
 
@@ -1506,54 +1534,66 @@ with tab_conv:
 
     grad_divider()
 
-    # Compressed Spring chart — EV/Sales position in 3-year range (primary)
-    # Falls back to P/S if EV/Sales history not available
-    _evs_col = "EVS_HistPos" if "EVS_HistPos" in df_conv.columns and df_conv["EVS_HistPos"].notna().any() else "PS_HistPos"
-    _val_col = "EV_Sales" if _evs_col == "EVS_HistPos" else "PS_Current"
-    _min_col = "EVS_3yr_Min" if _evs_col == "EVS_HistPos" else "PS_3yr_Min"
-    _max_col = "EVS_3yr_Max" if _evs_col == "EVS_HistPos" else "PS_3yr_Max"
-    _avg_col = "EVS_3yr_Avg" if _evs_col == "EVS_HistPos" else "PS_3yr_Avg"
-    _metric_label = "EV/Sales" if _evs_col == "EVS_HistPos" else "P/S"
+    # Coiled Base — basing + tightening + compressing + MA stack
+    # Replaces the old Compressed Spring chart with an actionable setup table.
+    st.markdown("#### Coiled Base — Money Printer Setups")
+    st.caption(
+        "Stocks currently basing (tight 20d range), tightening (ATR contracting), "
+        "compressing (low Bollinger width), with moving averages stacked below price. "
+        "Score 4/4 = premium setup. Score 3/4 = early candidate."
+    )
+    _coiled_cols = ["Ticker", "Price", "CoiledScore", "BaseTightPct", "ATRContract",
+                    "BBWidthPct", "MAStack", "RSI", "Pos52", "PillarTech", "ConvexityScore"]
+    _coiled_present = [c for c in _coiled_cols if c in df_conv.columns]
+    coiled_df = df_conv[df_conv["CoiledScore"].notna() &
+                        (df_conv["CoiledScore"] >= THRESHOLDS["coiled_base_min_score"])
+                       ][_coiled_present].copy() if "CoiledScore" in df_conv.columns else pd.DataFrame()
+    if not coiled_df.empty:
+        coiled_df = coiled_df.sort_values(["CoiledScore", "ConvexityScore"], ascending=[False, False])
+        coiled_disp = coiled_df.rename(columns={
+            "CoiledScore": "Coil", "BaseTightPct": "Range%",
+            "ATRContract": "ATR Ratio", "BBWidthPct": "BB Pctile",
+            "MAStack": "MA Stack", "PillarTech": "Tech", "ConvexityScore": "Convexity",
+            "Pos52": "52wk Pos",
+        })
+        coiled_disp["MA Stack"] = coiled_disp["MA Stack"].apply(lambda x: "Yes" if x else "No")
 
-    has_hist = df_conv[df_conv[_evs_col].notna()].sort_values(_evs_col) if _evs_col in df_conv.columns else pd.DataFrame()
-    if not has_hist.empty:
-        st.markdown(f"#### Compressed Spring — {_metric_label} Position in 3-Year Range")
+        def _color_coil(v):
+            if pd.isna(v): return ""
+            if v >= 4: return "background-color:#1a3a2a;color:#2ecc71;font-weight:600"
+            if v >= 3: return "background-color:#2a2a1a;color:#f39c12"
+            return ""
+
+        def _color_stack(v):
+            return "color:#2ecc71;font-weight:600" if v == "Yes" else "color:#888"
+
+        _coil_styled = (coiled_disp.style
+            .map(_color_coil, subset=["Coil"])
+            .map(_color_stack, subset=["MA Stack"])
+            .format({
+                "Price": "${:.2f}",
+                "Coil": lambda x: f"{int(x)}/4" if pd.notna(x) else "",
+                "Range%": lambda x: f"{x:.1f}%" if pd.notna(x) else "—",
+                "ATR Ratio": lambda x: f"{x:.2f}x" if pd.notna(x) else "—",
+                "BB Pctile": lambda x: f"{x:.0f}%" if pd.notna(x) else "—",
+                "RSI": lambda x: f"{x:.0f}" if pd.notna(x) else "",
+                "52wk Pos": lambda x: f"{x:.0f}%" if pd.notna(x) else "",
+                "Tech": lambda x: f"{x:.0f}" if pd.notna(x) else "",
+                "Convexity": lambda x: f"{x:.0f}" if pd.notna(x) else "",
+            }, na_rep="")
+        )
+        st.dataframe(_coil_styled, width="stretch", hide_index=True)
         st.caption(
-            f"How expensive is the stock today vs its own history ({_metric_label} accounts for debt)? "
-            "Left = historically cheap (compressed spring). Right = historically expensive. "
-            "Sector shown where available."
+            "**Range%** = 20d high-low as % of price (tight: ≤12%).  "
+            "**ATR Ratio** = 14d ATR / 60d ATR (tightening: ≤0.80).  "
+            "**BB Pctile** = current Bollinger width percentile vs 126d (compressing: ≤20%).  "
+            "**MA Stack** = Price > MA20 > MA50 > MA200 with MA20/50 rising."
         )
-        fig_ps = go.Figure()
-        has_hist.apply(
-            lambda row: fig_ps.add_trace(go.Bar(
-                x=[row[_evs_col]], y=[row["Ticker"]],
-                orientation="h",
-                marker_color="#2ecc71" if row[_evs_col] <= 25 else "#f39c12" if row[_evs_col] <= 60 else "#e74c3c",
-                showlegend=False,
-                text=f"  {row[_evs_col]:.0f}%  |  {row[_val_col]:.1f}x {_metric_label}"
-                     + (f"  [{row['Sector']}]" if pd.notna(row.get("Sector")) and row.get("Sector") else "")
-                     + (f"  (range: {row[_min_col]:.1f}–{row[_max_col]:.1f}x)" if pd.notna(row.get(_min_col)) else ""),
-                textposition="outside",
-                hovertemplate=(
-                    f"<b>{row['Ticker']}</b><br>"
-                    + (f"Sector: {row['Sector']}<br>" if pd.notna(row.get("Sector")) and row.get("Sector") else "")
-                    + f"Current {_metric_label}: {row[_val_col]:.2f}x<br>"
-                    + (f"3yr Min: {row[_min_col]:.2f}x<br>3yr Max: {row[_max_col]:.2f}x<br>3yr Avg: {row[_avg_col]:.2f}x<br>" if pd.notna(row.get(_min_col)) else "")
-                    + f"Position in range: {row[_evs_col]:.0f}%<extra></extra>"
-                ),
-            )),
-            axis=1
-        )
-        fig_ps.add_vline(x=25, line_dash="dash", line_color="#2ecc71",
-                         annotation_text="Compressed zone", annotation_font_color="#2ecc71")
-        fig_ps.update_layout(
-            height=max(350, len(has_hist) * 34),
-            xaxis=dict(range=[0, 130], title=f"Position in 3-year {_metric_label} range (%)"),
-            margin=dict(l=60, r=20, t=20, b=40), **DARK,
-        )
-        st.plotly_chart(fig_ps, width="stretch")
     else:
-        st.info(f"Historical {_metric_label} data loading — check back shortly or refresh.")
+        st.info(
+            "No coiled bases right now — nothing in the watchlist is currently "
+            "compressing with stacked moving averages. Worth checking back after 1–2 weeks of sideways action."
+        )
 
     # ── Peer Comparison chart — EV/Sales vs ETF peer basket ──
     grad_divider()
@@ -1601,36 +1641,41 @@ with tab_conv:
     else:
         st.info("Peer comparison data unavailable — requires FMP API key with ETF holdings access.")
 
-    # Priced for Perfection warning
+    # Priced for Perfection warning — EV/Sales top quartile + RSI overbought
     if perfection:
         grad_divider()
+        # Column triplet: prefer EV/Sales, silently fall back to P/S if unavailable
+        if _hist_col == "EVS_HistPos":
+            _val_col, _min_col, _max_col = "EV_Sales", "EVS_3yr_Min", "EVS_3yr_Max"
+        else:
+            _val_col, _min_col, _max_col = "PS_Current", "PS_3yr_Min", "PS_3yr_Max"
         st.markdown("#### Priced for Perfection — Negative Asymmetry")
         st.warning(
-            f"**{', '.join(perfection)}** — these stocks have {_metric_label} in the top 25% of their 3-year range "
-            "AND RSI >= 65. This is the opposite of a compressed spring: expensive + overbought = "
-            "downside risk outweighs upside. Consider trimming or tightening stops."
+            f"**{', '.join(perfection)}** — EV/Sales in the top 25% of its 3-year range "
+            "AND RSI >= 65. Expensive + overbought = downside risk outweighs upside. "
+            "Consider trimming or tightening stops."
         )
-        _pfp_cols = ["Ticker", "Price", "RSI", _val_col, _evs_col, _min_col, _max_col]
+        _pfp_cols = ["Ticker", "Price", "RSI", _val_col, _hist_col, _min_col, _max_col]
         pfp_tbl = df_conv[df_conv["Ticker"].isin(perfection)][[c for c in _pfp_cols if c in df_conv.columns]].copy()
         for c in [_val_col, _min_col, _max_col]:
             if c in pfp_tbl.columns:
                 pfp_tbl[c] = pfp_tbl[c].apply(lambda x: f"{x:.1f}x" if pd.notna(x) else "N/A")
-        if _evs_col in pfp_tbl.columns:
-            pfp_tbl[_evs_col] = pfp_tbl[_evs_col].apply(lambda x: f"{x:.0f}%" if pd.notna(x) else "N/A")
+        if _hist_col in pfp_tbl.columns:
+            pfp_tbl[_hist_col] = pfp_tbl[_hist_col].apply(lambda x: f"{x:.0f}%" if pd.notna(x) else "N/A")
         pfp_tbl = pfp_tbl.rename(columns={
-            _val_col: _metric_label, _evs_col: f"{_metric_label} Position",
+            _val_col: "EV/Sales", _hist_col: "EV/Sales Position",
             _min_col: "3yr Low", _max_col: "3yr High",
         })
         st.dataframe(pfp_tbl, width="stretch", hide_index=True)
 
     grad_divider()
 
-    # Valuation metrics table
+    # Valuation metrics table — EV/Sales only (P/S kept internally as fallback)
     st.markdown("#### Valuation Metrics")
     _sort_val_col = "EV_Sales" if "EV_Sales" in df_conv.columns else "PS_Current"
     val_tbl = df_conv[[c for c in [
         "Ticker", "Price", "EV_Sales", "EVS_HistPos", "EVS_SectorPct",
-        "PS_Current", "PS_3yr_Min", "PS_3yr_Avg",
+        "EVS_3yr_Min", "EVS_3yr_Avg",
         "EV_EBITDA", "GrossMargin", "RevGrowthPct", "Rule40",
         "FCFPositive", "CashRunwayMonths", "InsiderPct", "InstitPct", "DaysToCover", "Sector",
     ] if c in df_conv.columns]].copy().sort_values(_sort_val_col, na_position="last")
@@ -1639,7 +1684,7 @@ with tab_conv:
 
     val_tbl = val_tbl.rename(columns={
         "EV_Sales": "EV/Sales", "EVS_HistPos": "EV/S Hist%", "EVS_SectorPct": "EV/S Sector%",
-        "PS_Current": "P/S", "PS_3yr_Min": "P/S 3yr Low", "PS_3yr_Avg": "P/S 3yr Avg",
+        "EVS_3yr_Min": "EV/S 3yr Low", "EVS_3yr_Avg": "EV/S 3yr Avg",
         "EV_EBITDA": "EV/EBITDA", "GrossMargin": "Gross Margin",
         "RevGrowthPct": "Rev Growth", "FCFPositive": "FCF+",
         "CashRunwayMonths": "Runway", "InsiderPct": "Insider%",
@@ -1648,7 +1693,7 @@ with tab_conv:
 
     # Gradient: lower EV/Sales is better; higher Rev Growth / Rule40 is better
     val_grad_cols_green = [c for c in ["Rev Growth", "Rule40"] if c in val_tbl.columns and val_tbl[c].notna().any()]
-    val_grad_cols_rev   = [c for c in ["EV/Sales", "P/S"] if c in val_tbl.columns and val_tbl[c].notna().any()]
+    val_grad_cols_rev   = [c for c in ["EV/Sales"] if c in val_tbl.columns and val_tbl[c].notna().any()]
 
     val_styled = val_tbl.style
     if val_grad_cols_green:
@@ -1660,9 +1705,8 @@ with tab_conv:
         "EV/Sales": lambda x: f"{x:.1f}x" if pd.notna(x) and x else "N/A",
         "EV/S Hist%": lambda x: f"{x:.0f}%" if pd.notna(x) else "—",
         "EV/S Sector%": lambda x: f"{x:.0f}%" if pd.notna(x) else "—",
-        "P/S": lambda x: f"{x:.1f}x" if pd.notna(x) and x else "N/A",
-        "P/S 3yr Low": lambda x: f"{x:.1f}x" if pd.notna(x) and x else "—",
-        "P/S 3yr Avg": lambda x: f"{x:.1f}x" if pd.notna(x) and x else "—",
+        "EV/S 3yr Low": lambda x: f"{x:.1f}x" if pd.notna(x) and x else "—",
+        "EV/S 3yr Avg": lambda x: f"{x:.1f}x" if pd.notna(x) and x else "—",
         "EV/EBITDA": lambda x: f"{x:.1f}x" if pd.notna(x) and x else "N/A",
         "Gross Margin": lambda x: f"{x:.0f}%" if pd.notna(x) and x else "N/A",
         "Rev Growth": lambda x: f"{x:+.0f}%" if pd.notna(x) and x else "N/A",
@@ -1684,17 +1728,15 @@ with tab_conv:
         "Companies not yet FCF positive but growing fast with adequate runway — "
         "the 'pre-institutional green light' setup."
     )
-    _ebitda_val_col = "EV_Sales" if "EV_Sales" in df_conv.columns else "PS_Current"
-    _ebitda_val_label = "EV/Sales" if _ebitda_val_col == "EV_Sales" else "P/S"
     ebitda_flip = df_conv[
         (df_conv["FCFPositive"] == False) &
         df_conv["RevGrowthPct"].notna()
     ].sort_values("RevGrowthPct", ascending=False)[
-        [c for c in ["Ticker", "Price", "RevGrowthPct", "Rule40", "CashRunwayMonths", _ebitda_val_col] if c in df_conv.columns]
+        [c for c in ["Ticker", "Price", "RevGrowthPct", "Rule40", "CashRunwayMonths", "EV_Sales"] if c in df_conv.columns]
     ].copy()
     ebitda_flip = ebitda_flip.rename(columns={
         "RevGrowthPct": "Rev Growth", "CashRunwayMonths": "Cash Runway",
-        _ebitda_val_col: _ebitda_val_label,
+        "EV_Sales": "EV/Sales",
     })
     if not ebitda_flip.empty:
         eb_grad_cols = [c for c in ["Rev Growth"] if ebitda_flip[c].notna().any()]
@@ -1706,7 +1748,7 @@ with tab_conv:
             "Rev Growth": lambda x: f"{x:+.0f}%" if pd.notna(x) else "N/A",
             "Rule40": lambda x: f"{x:.0f}" if pd.notna(x) and x else "N/A",
             "Cash Runway": lambda x: f"{x:.0f} months" if pd.notna(x) and x else "N/A",
-            "P/S": lambda x: f"{x:.1f}x" if pd.notna(x) and x else "N/A",
+            "EV/Sales": lambda x: f"{x:.1f}x" if pd.notna(x) and x else "N/A",
         }, na_rep="N/A")
         st.dataframe(eb_styled, width="stretch", hide_index=True)
     else:
@@ -1949,7 +1991,19 @@ with tab_themes:
         "ETF benchmark performance vs SPY. Sorted by 1-month relative strength to show what's leading now. "
         "Trend compares 1m vs 3m to detect acceleration (capital flowing in) or deceleration (capital flowing out)."
     )
-    if spy_ret and not df_etf.empty:
+    # Sanitize SPY returns — any NaN silently poisons every comparison downstream
+    def _finite(v):
+        try:
+            f = float(v.item()) if hasattr(v, "item") else float(v)
+            return f if np.isfinite(f) else None
+        except (TypeError, ValueError):
+            return None
+    _spy_1m_val = _finite(spy_ret.get("1m")) if spy_ret else None
+    _spy_3m_val = _finite(spy_ret.get("3m")) if spy_ret else None
+
+    if _spy_1m_val is None or _spy_3m_val is None:
+        st.info("SPY benchmark data unavailable right now — theme RS can't be computed until SPY returns come through.")
+    elif not df_etf.empty:
         trend_rows = []
         for theme_name in _all_theme_names:
             etf_list = _etf_tickers_map.get(theme_name, [])
@@ -1958,14 +2012,10 @@ with tab_themes:
                 continue
             etf_1m = etf_sub["Ret1m"].dropna().mean() if etf_sub["Ret1m"].notna().any() else None
             etf_3m = etf_sub["Ret3m"].dropna().mean() if etf_sub["Ret3m"].notna().any() else None
-            if etf_1m is None or etf_3m is None:
+            if etf_1m is None or etf_3m is None or not np.isfinite(etf_1m) or not np.isfinite(etf_3m):
                 continue
-            _spy_1m = spy_ret.get("1m", 0)
-            _spy_3m = spy_ret.get("3m", 0)
-            _spy_1m = float(_spy_1m.item()) if hasattr(_spy_1m, "item") else float(_spy_1m or 0)
-            _spy_3m = float(_spy_3m.item()) if hasattr(_spy_3m, "item") else float(_spy_3m or 0)
-            rs_1m = round(etf_1m - _spy_1m, 1)
-            rs_3m = round(etf_3m - _spy_3m, 1)
+            rs_1m = round(etf_1m - _spy_1m_val, 1)
+            rs_3m = round(etf_3m - _spy_3m_val, 1)
             if rs_1m > rs_3m + 1:
                 momentum_status = "Accelerating"
             elif rs_1m < rs_3m - 1:
@@ -2731,12 +2781,12 @@ with tab_sig:
         "Add your Anthropic API key in the sidebar (~$0.001 per ticker)."
     )
 
-    api_key = _get_anthropic_key()
+    api_key = _get_xai_key()
     if not api_key:
         st.warning(
-            "Anthropic API key not found.  \n"
-            "Add `ANTHROPIC_API_KEY` to your `.env` file locally or Streamlit Cloud secrets.  \n"
-            "Get one at **console.anthropic.com**."
+            "xAI API key not found.  \n"
+            "Add `XAI_API_KEY` to your Streamlit secrets.  \n"
+            "Get one at **console.x.ai**."
         )
     else:
         col_single, col_all = st.columns([2, 1])
@@ -2747,15 +2797,14 @@ with tab_sig:
 
         with col_all:
             st.markdown("#### Analyze full portfolio")
-            st.caption("~30 sec, costs ~$0.02 total")
+            st.caption("~30 sec — Grok searches X + web per ticker")
             run_all = st.button("Run All", width="stretch")
 
         def build_summary(t):
             r  = df_price[df_price["Ticker"] == t].iloc[0]
             fd = df_fund[df_fund["Ticker"] == t].iloc[0].to_dict() if not df_fund[df_fund["Ticker"] == t].empty else {}
             ex = df_extras[df_extras["Ticker"] == t].iloc[0] if not df_extras[df_extras["Ticker"] == t].empty else {}
-            sent = st_data.get(t, {})
-            return claude_summarize(
+            return grok_summarize(
                 ticker=t,
                 price=r["Price"], rsi=r["RSI"], atr_pct=r["ATR_pct"],
                 pos52=r["Pos52"], vs50=r["vsMA50"], vs200=r.get("vsMA200"),
@@ -2765,7 +2814,7 @@ with tab_sig:
                 insider_signal=ex.get("InsiderSignal") if hasattr(ex, "get") else None,
                 earnings_beats=None,
                 next_earnings=fd.get("NextEarnings"),
-                st_bull_pct=sent.get("bull_pct"), st_msgs=sent.get("msg_count", 0),
+                x_sentiment=x_sentiment_data.get(t),
                 headlines=ex.get("Headlines") if hasattr(ex, "get") else [],
                 api_key=api_key,
             )
@@ -2774,7 +2823,7 @@ with tab_sig:
             with st.spinner(f"Generating brief for ${selected_ticker}..."):
                 result = build_summary(selected_ticker)
             st.markdown(result)
-            st.caption(f"Generated {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} · model: claude-haiku-4-5")
+            st.caption(f"Generated {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} · model: grok-3")
 
         if run_all:
             grad_divider()

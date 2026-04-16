@@ -171,6 +171,15 @@ def _get_anthropic_key():
     return os.environ.get("ANTHROPIC_API_KEY", "")
 
 
+def _get_xai_key():
+    """Get xAI API key from Streamlit secrets or env var."""
+    try:
+        return st.secrets["XAI_API_KEY"]
+    except (KeyError, FileNotFoundError):
+        pass
+    return os.environ.get("XAI_API_KEY", "")
+
+
 # ── Metadata fetching ────────────────────────────────────────────────────────
 
 @st.cache_data(ttl=86400, show_spinner=False)

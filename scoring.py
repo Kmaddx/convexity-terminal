@@ -19,6 +19,15 @@ import pandas as pd
 #    All magic numbers extracted here for easy experimentation and visibility.
 
 THRESHOLDS = {
+    # Coiled Base — "basing + tightening + compressing + MA stack" setup
+    "coiled_base_min_score": 3,        # at least 3 of 4 components to qualify
+    "coiled_strong_score": 4,          # all 4 firing = premium signal
+    "base_tightness_max_pct": 12,      # 20d range as % of price (<= = tight)
+    "atr_contraction_max_ratio": 0.8,  # 14d ATR / 60d ATR (<= = tightening)
+    "bb_width_bottom_pct": 20,         # BB width in bottom N% of 126d (<= = compressing)
+    "coiled_tech_boost_strong": 12,    # pts added to Technical when 4/4
+    "coiled_tech_boost_partial": 7,    # pts added when 3/4
+
     # Technical pillar — price action & momentum
     "rsi_oversold": 35,
     "rsi_overbought": 70,
@@ -123,6 +132,11 @@ def calc_setup_stage(row):
     rsi   = _safe(row.get("RSI"), 50)
     pos52 = _safe(row.get("Pos52"), 50)
     vs50  = _safe(row.get("vsMA50"), 0)
+    coiled = row.get("CoiledScore")
+    # Coiled Base — tightening + compressing + MA stack under price.
+    # Takes precedence over Basing: this is the setup that "prints money".
+    if coiled is not None and coiled >= THRESHOLDS["coiled_base_min_score"]:
+        return "Coiled Base"
     # Breaking Down — below support, thesis at risk
     if rsi < THRESHOLDS["rsi_oversold"] and vs50 < THRESHOLDS["vs50_strong_down"]:
         return "Breaking Down"
@@ -143,12 +157,12 @@ def calc_setup_stage(row):
 
 # ── Four Pillars (the single scoring spine) ──────────────────────────────────
 
-def calc_four_pillars(row, themes, spy_ret=None, etf_data=None, st_data=None, ai_sentiment=None):
+def calc_four_pillars(row, themes, spy_ret=None, etf_data=None, st_data=None, ai_sentiment=None, x_sentiment=None):
     """Score each of the 4 pillars 0-100. Returns dict with scores + alignment.
 
     The four pillars absorb ALL sub-scores:
     - Technical absorbs: RSI, trend (MA50/MA200), position, relative strength, momentum
-    - Fundamental absorbs: growth, margins, FCF, valuation (P/S), ownership, analyst targets
+    - Fundamental absorbs: growth, margins, FCF, valuation (EV/Sales), ownership, analyst targets
     - Thematic absorbs: theme alignment, ETF benchmark momentum, sector rotation
     - Narrative absorbs: sentiment, insider buying, earnings beats, catalyst proximity
     """
@@ -198,6 +212,16 @@ def calc_four_pillars(row, themes, spy_ret=None, etf_data=None, st_data=None, ai
         tech += min(recent_dd / 0.5, 1.0) * 8
     elif recent_dd > THRESHOLDS["dd_excess_weak"]:
         tech += 3
+
+    # Coiled Base boost — basing + tightening + compressing + MA stack
+    # The "money printer" setup: tight price action with MAs aligned below price.
+    # Full boost when all 4 components fire, partial when 3/4.
+    coiled = row.get("CoiledScore")
+    if coiled is not None:
+        if coiled >= THRESHOLDS["coiled_strong_score"]:
+            tech += THRESHOLDS["coiled_tech_boost_strong"]
+        elif coiled >= THRESHOLDS["coiled_base_min_score"]:
+            tech += THRESHOLDS["coiled_tech_boost_partial"]
 
     # ── Fundamental (0-100) ──
     # Designed for small-cap/micro-cap growth companies where FCF is often negative
@@ -356,10 +380,12 @@ def calc_four_pillars(row, themes, spy_ret=None, etf_data=None, st_data=None, ai
     # Baseline: 15 pts — you picked this stock for a reason, it has a thesis
     narr += 15
 
-    # Social sentiment (StockTwits): up to 10 pts
-    _st_sentiment = (st_data or {}).get(ticker, {})
-    bull_pct = _st_sentiment.get("bull_pct")
-    msg_count = _st_sentiment.get("msg_count", 0)
+    # Social sentiment: up to 10 pts
+    # X sentiment (Grok live search) takes priority; StockTwits as fallback
+    _x_sent   = (x_sentiment or {}).get(ticker, {})
+    _st_sent  = (st_data or {}).get(ticker, {})
+    bull_pct  = _x_sent.get("bull_pct") if _x_sent else _st_sent.get("bull_pct")
+    msg_count = _st_sent.get("msg_count", 0)   # StockTwits volume signal when available
     if bull_pct is not None:
         if bull_pct >= 60:
             narr += 5 + min((bull_pct - 60) / 30, 1.0) * 5

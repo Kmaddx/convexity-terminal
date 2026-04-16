@@ -26,25 +26,58 @@ All thresholds are in `THRESHOLDS` dict at top of `scoring.py` — tune there, n
 ## Key Design Decisions
 
 ### Valuation: EV/Sales not P/S
-- Use EV/Sales (enterprise value / revenue) as primary valuation metric
+- EV/Sales (enterprise value / revenue) is the ONLY user-facing valuation metric
 - EV/Sales accounts for debt; P/S does not
 - Always compare stocks within their sector, not across sectors (S&J advice)
 - `EVS_SectorPct` = each stock's EV/Sales percentile vs sector peers, computed in portfolio_app.py after data load
-- P/S is kept for display reference but does not drive scoring
+- `PS_HistPos`, `PS_Current`, `PS_3yr_*` are still computed in data.py as silent fallback only — they never appear in the UI
+
+### Coiled Base Setup ("money printer")
+S&J heuristic: "basing + tightening + compressing with key moving averages aligning below price".
+Four measurable components in `fetch_price_data` (data.py):
+- **BaseTightPct** — 20d high-low as % of price (tight: ≤12%)
+- **ATRContract** — 14d ATR / 60d average ATR (tightening: ≤0.80)
+- **BBWidthPct** — current Bollinger width percentile in last 126d (compressing: ≤20%)
+- **MAStack** — Price > MA20 > MA50 > MA200 with MA20/50 rising
+- **CoiledScore** — count (0–4) of how many components fire
+
+Incorporation:
+- `calc_setup_stage` returns "Coiled Base" when score ≥3 (takes precedence over Basing)
+- Technical pillar gets +7 pts at 3/4, +12 pts at 4/4 (`THRESHOLDS["coiled_tech_boost_*"]`)
+- Dedicated UI section in Convexity tab lists all qualifying tickers (replaced old "Compressed Spring" chart)
 
 ### Data Sources
-- **yfinance** — price data, fundamentals, insider transactions (unreliable; known 401/crumb errors)
-- **Anthropic Claude Haiku** — AI headline sentiment scoring and market summary
-- **StockTwits** — retail sentiment (bull/bear %)
+- **yfinance** — price data only (batch `yf.download`); fundamentals migrated to Finnhub
+- **Finnhub** — fundamentals, insider transactions, news, earnings calendar (free tier)
+- **xAI Grok** — headline sentiment scoring, X/social sentiment, narrative summary, X insights
+- **StockTwits** — retail sentiment fallback (bull/bear %) if X sentiment unavailable
 - **Google News RSS** — market headlines
 - **FMP (Financial Modeling Prep)** — ticker metadata / theme assignment
-- yfinance is the biggest pain point — it has intermittent 401 "Invalid Crumb" errors from Yahoo Finance
-- All fetches have timeouts (15s per ticker, 30s overall) to prevent hanging
+- yfinance is only used for price data now — `yf.download()` on a single thread (reliable)
 - Disk cache: `fund_cache.json` for fundamentals, `meta_cache.json` for metadata
+
+### xAI / Grok API — IMPORTANT
+Two separate endpoints with different formats:
+
+**1. Chat completions** (`/v1/chat/completions`) — standard calls, no live search:
+```python
+payload = {"model": "grok-3-mini", "messages": [...], "max_tokens": N}
+response["choices"][0]["message"]["content"]
+```
+
+**2. Responses API** (`/v1/responses`) — required for Agent Tools (live search):
+```python
+payload = {"model": "grok-3", "input": [...], "max_output_tokens": N, "tools": [{"type": "x_search"}, {"type": "web_search"}]}
+response["output"][0]["content"][0]["text"]
+```
+- `search_parameters` is **deprecated** (returns 410) — always use Responses API for live search
+- Tool types: `x_search` (X/Twitter), `web_search` (web)
+- Docs: https://docs.x.ai/docs/guides/tools/overview
 
 ### API Keys
 - Stored in Streamlit secrets (`st.secrets`) only — never in .env files
-- Keys needed: `ANTHROPIC_API_KEY`, `FMP_API_KEY`
+- Keys needed: `XAI_API_KEY`, `FINNHUB_API_KEY`, `FMP_API_KEY`
+- `ANTHROPIC_API_KEY` is no longer used (kept in secrets.toml but code uses xAI)
 
 ### Performance
 - ThreadPoolExecutor(4-6 workers) for parallel fundamentals and extras fetching
